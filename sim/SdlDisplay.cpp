@@ -13,6 +13,7 @@
 #include "SteedPilot/FontAtlas.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -176,13 +177,42 @@ SdlDisplay::SdlDisplay(int width, int height, int scale) : _width(width), _heigh
         return;
     }
 
-    SDL_RenderSetLogicalSize(_renderer, width, height);
-    SDL_RenderSetIntegerScale(_renderer, SDL_TRUE);
+    _target = SDL_CreateTexture(
+        _renderer,
+        SDL_PIXELFORMAT_RGBA32,
+        SDL_TEXTUREACCESS_TARGET,
+        width * _sampleScale,
+        height * _sampleScale
+    );
+
+    if (!_target) {
+        return;
+    }
+
+    _presentTexture = SDL_CreateTexture(
+        _renderer,
+        SDL_PIXELFORMAT_RGBA32,
+        SDL_TEXTUREACCESS_STREAMING,
+        width,
+        height
+    );
+
+    if (!_presentTexture) {
+        return;
+    }
+
+    SDL_SetRenderTarget(_renderer, _target);
     SDL_ShowWindow(_window);
     SDL_RaiseWindow(_window);
 }
 
 SdlDisplay::~SdlDisplay() {
+    if (_presentTexture) {
+        SDL_DestroyTexture(_presentTexture);
+    }
+    if (_target) {
+        SDL_DestroyTexture(_target);
+    }
     if (_renderer) {
         SDL_DestroyRenderer(_renderer);
     }
@@ -193,7 +223,7 @@ SdlDisplay::~SdlDisplay() {
 }
 
 bool SdlDisplay::ok() const {
-    return _window && _renderer;
+    return _window && _renderer && _target && _presentTexture;
 }
 
 bool SdlDisplay::poll() {
@@ -228,24 +258,91 @@ int SdlDisplay::height() const {
 }
 
 void SdlDisplay::clear(SteedPilot::Color color) {
+    SDL_SetRenderTarget(_renderer, _target);
     setColor(color);
     SDL_RenderClear(_renderer);
 }
 
 void SdlDisplay::present() {
+    std::vector<uint8_t> supersampled((size_t)_width * _height * _sampleScale * _sampleScale * 4);
+    SDL_SetRenderTarget(_renderer, _target);
+    SDL_RenderReadPixels(_renderer, nullptr, SDL_PIXELFORMAT_RGBA32, supersampled.data(), _width * _sampleScale * 4);
+
     _lastFrame.resize((size_t)_width * _height * 4);
-    SDL_RenderReadPixels(_renderer, nullptr, SDL_PIXELFORMAT_RGBA32, _lastFrame.data(), _width * 4);
+    for (int y = 0; y < _height; ++y) {
+        for (int x = 0; x < _width; ++x) {
+            int r = 0;
+            int g = 0;
+            int b = 0;
+            int a = 0;
+
+            for (int yy = 0; yy < _sampleScale; ++yy) {
+                for (int xx = 0; xx < _sampleScale; ++xx) {
+                    const int srcX = x * _sampleScale + xx;
+                    const int srcY = y * _sampleScale + yy;
+                    const int src = (srcY * _width * _sampleScale + srcX) * 4;
+                    r += supersampled[src + 0];
+                    g += supersampled[src + 1];
+                    b += supersampled[src + 2];
+                    a += supersampled[src + 3];
+                }
+            }
+
+            const int count = _sampleScale * _sampleScale;
+            const int dst = (y * _width + x) * 4;
+            _lastFrame[dst + 0] = (uint8_t)(r / count);
+            _lastFrame[dst + 1] = (uint8_t)(g / count);
+            _lastFrame[dst + 2] = (uint8_t)(b / count);
+            _lastFrame[dst + 3] = (uint8_t)(a / count);
+        }
+    }
+
+    SDL_UpdateTexture(_presentTexture, nullptr, _lastFrame.data(), _width * 4);
+    SDL_SetRenderTarget(_renderer, nullptr);
+    SDL_RenderClear(_renderer);
+    SDL_RenderCopy(_renderer, _presentTexture, nullptr, nullptr);
     SDL_RenderPresent(_renderer);
+    SDL_SetRenderTarget(_renderer, _target);
 }
 
 void SdlDisplay::line(int x0, int y0, int x1, int y1, SteedPilot::Color color, int thickness) {
     setColor(color);
-    thickness = std::max(1, thickness);
-    const int offset = thickness / 2;
+    const int radius = ss(std::max(1, thickness)) / 2;
+    const int startX = sx(x0);
+    const int startY = sy(y0);
+    const int endX = sx(x1);
+    const int endY = sy(y1);
+    const int minX = std::min(startX, endX) - radius - 1;
+    const int maxX = std::max(startX, endX) + radius + 1;
+    const int minY = std::min(startY, endY) - radius - 1;
+    const int maxY = std::max(startY, endY) + radius + 1;
+    const float dx = (float)(endX - startX);
+    const float dy = (float)(endY - startY);
+    const float len2 = dx * dx + dy * dy;
 
-    for (int i = -offset; i <= offset; ++i) {
-        SDL_RenderDrawLine(_renderer, x0 + i, y0, x1 + i, y1);
-        SDL_RenderDrawLine(_renderer, x0, y0 + i, x1, y1 + i);
+    if (len2 <= 0.0f) {
+        fillCircle(x0, y0, thickness / 2, color);
+        return;
+    }
+
+    for (int y = minY; y <= maxY; ++y) {
+        for (int x = minX; x <= maxX; ++x) {
+            float t = ((x - startX) * dx + (y - startY) * dy) / len2;
+            if (t < 0.0f) {
+                t = 0.0f;
+            } else if (t > 1.0f) {
+                t = 1.0f;
+            }
+
+            const float nearestX = startX + dx * t;
+            const float nearestY = startY + dy * t;
+            const float distX = x - nearestX;
+            const float distY = y - nearestY;
+
+            if (distX * distX + distY * distY <= radius * radius) {
+                SDL_RenderDrawPoint(_renderer, x, y);
+            }
+        }
     }
 }
 
@@ -254,7 +351,7 @@ void SdlDisplay::circle(int cx, int cy, int radius, SteedPilot::Color color, int
     thickness = std::max(1, thickness);
 
     for (int t = 0; t < thickness; ++t) {
-        const int r = radius - t;
+        const int r = ss(radius) - t;
         int x = r - 1;
         int y = 0;
         int dx = 1;
@@ -262,14 +359,14 @@ void SdlDisplay::circle(int cx, int cy, int radius, SteedPilot::Color color, int
         int err = dx - (r << 1);
 
         while (x >= y) {
-            SDL_RenderDrawPoint(_renderer, cx + x, cy + y);
-            SDL_RenderDrawPoint(_renderer, cx + y, cy + x);
-            SDL_RenderDrawPoint(_renderer, cx - y, cy + x);
-            SDL_RenderDrawPoint(_renderer, cx - x, cy + y);
-            SDL_RenderDrawPoint(_renderer, cx - x, cy - y);
-            SDL_RenderDrawPoint(_renderer, cx - y, cy - x);
-            SDL_RenderDrawPoint(_renderer, cx + y, cy - x);
-            SDL_RenderDrawPoint(_renderer, cx + x, cy - y);
+            SDL_RenderDrawPoint(_renderer, sx(cx) + x, sy(cy) + y);
+            SDL_RenderDrawPoint(_renderer, sx(cx) + y, sy(cy) + x);
+            SDL_RenderDrawPoint(_renderer, sx(cx) - y, sy(cy) + x);
+            SDL_RenderDrawPoint(_renderer, sx(cx) - x, sy(cy) + y);
+            SDL_RenderDrawPoint(_renderer, sx(cx) - x, sy(cy) - y);
+            SDL_RenderDrawPoint(_renderer, sx(cx) - y, sy(cy) - x);
+            SDL_RenderDrawPoint(_renderer, sx(cx) + y, sy(cy) - x);
+            SDL_RenderDrawPoint(_renderer, sx(cx) + x, sy(cy) - y);
 
             if (err <= 0) {
                 ++y;
@@ -288,10 +385,11 @@ void SdlDisplay::circle(int cx, int cy, int radius, SteedPilot::Color color, int
 
 void SdlDisplay::fillCircle(int cx, int cy, int radius, SteedPilot::Color color) {
     setColor(color);
-    for (int y = -radius; y <= radius; ++y) {
-        for (int x = -radius; x <= radius; ++x) {
-            if (x * x + y * y <= radius * radius) {
-                SDL_RenderDrawPoint(_renderer, cx + x, cy + y);
+    const int scaledRadius = ss(radius);
+    for (int y = -scaledRadius; y <= scaledRadius; ++y) {
+        for (int x = -scaledRadius; x <= scaledRadius; ++x) {
+            if (x * x + y * y <= scaledRadius * scaledRadius) {
+                SDL_RenderDrawPoint(_renderer, sx(cx) + x, sy(cy) + y);
             }
         }
     }
@@ -324,7 +422,8 @@ void SdlDisplay::text(int x, int y, const char* value, int size, SteedPilot::Col
                             (uint8_t)((color.b * coverage) / 255),
                             255
                         );
-                        SDL_RenderDrawPoint(_renderer, glyphX + col, glyphY + row);
+                        const SDL_Rect pixel{sx(glyphX + col), sy(glyphY + row), ss(1), ss(1)};
+                        SDL_RenderFillRect(_renderer, &pixel);
                     }
                 }
             }
@@ -338,4 +437,16 @@ void SdlDisplay::text(int x, int y, const char* value, int size, SteedPilot::Col
 
 void SdlDisplay::setColor(SteedPilot::Color color) {
     SDL_SetRenderDrawColor(_renderer, color.r, color.g, color.b, 255);
+}
+
+int SdlDisplay::sx(int x) const {
+    return x * _sampleScale;
+}
+
+int SdlDisplay::sy(int y) const {
+    return y * _sampleScale;
+}
+
+int SdlDisplay::ss(int value) const {
+    return value * _sampleScale;
 }

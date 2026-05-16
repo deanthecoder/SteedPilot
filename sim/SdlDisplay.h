@@ -68,9 +68,15 @@ public:
 private:
     int _width;
     int _height;
+    int _sampleScale = 3;
     SDL_Window* _window = nullptr;
     SDL_Renderer* _renderer = nullptr;
+    SDL_Texture* _target = nullptr;
+    SDL_Texture* _presentTexture = nullptr;
     std::vector<uint8_t> _lastFrame;
 
+    int sx(int x) const;
+    int sy(int y) const;
+    int ss(int value) const;
     void setColor(SteedPilot::Color color);
 };

@@ -73,10 +73,10 @@ void drawArrow(Display& display, int cx, int cy, int length, float degrees, Colo
     const int wingBX = tipX + (int)(std::cos(sideB) * (length / 3));
     const int wingBY = tipY + (int)(std::sin(sideB) * (length / 3));
 
-    display.line(tailX, tailY, tipX, tipY, color, 6);
-    display.line(tipX, tipY, wingAX, wingAY, color, 6);
-    display.line(tipX, tipY, wingBX, wingBY, color, 6);
-    display.fillCircle(cx, cy, 7, color);
+    display.line(tailX, tailY, tipX, tipY, color, 9);
+    display.line(tipX, tipY, wingAX, wingAY, color, 9);
+    display.line(tipX, tipY, wingBX, wingBY, color, 9);
+    display.fillCircle(cx, cy, 9, color);
 }
 
 const char* maneuverLabel(Maneuver maneuver) {
