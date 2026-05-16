@@ -72,6 +72,8 @@ Destination heading mode is not intended to be a traditional NSEW compass. It sh
 
 Distances should be formatted for the rider's selected preference. The initial default is miles for longer distances and meters for shorter distances, with app settings planned for alternatives such as miles/feet and kilometers/meters.
 
+Speed limit warnings should avoid adding another text readout. When current speed exceeds the limit supplied by the phone, the display can show a red circular edge warning that fades from subtle to fully opaque between the speed limit and speed limit + 5 in the rider's selected speed unit.
+
 ## UI Direction
 The interface should favour:
 
@@ -93,6 +95,7 @@ The desktop simulator can export reference screenshots for README updates and vi
 
 ![Navigation ahead](img/navigation-ahead.png)
 ![Navigation left](img/navigation-left.png)
+![Navigation speed warning](img/navigation-speed-warning.png)
 ![Destination heading](img/destination-heading.png)
 ![Display calibration](img/display-calibration.png)
 

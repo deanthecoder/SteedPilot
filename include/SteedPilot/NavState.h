@@ -29,13 +29,20 @@ enum class Maneuver {
     Arrive
 };
 
+enum class SpeedUnit {
+    Mph,
+    Kph
+};
+
 struct NavState {
     DisplayMode mode = DisplayMode::Navigation;
     Maneuver maneuver = Maneuver::Continue;
     int32_t distanceToManeuverMeters = 240;
     int32_t distanceToDestinationMeters = 18400;
     int16_t destinationBearingDegrees = 35;
-    int16_t speedLimitMph = 0;
+    int16_t currentSpeed = 0;
+    int16_t speedLimit = 0;
+    SpeedUnit speedUnit = SpeedUnit::Mph;
     bool connected = true;
 };
 

@@ -26,7 +26,9 @@ SteedPilot::NavState scenarioFor(uint32_t elapsedMs) {
     state.distanceToManeuverMeters = 420 - (int32_t)((elapsedMs / 25) % 390);
     state.distanceToDestinationMeters = 18400 - (int32_t)((elapsedMs / 100) % 2500);
     state.destinationBearingDegrees = (int16_t)((elapsedMs / 30) % 360);
-    state.speedLimitMph = 50;
+    state.speedLimit = 50;
+    state.currentSpeed = 47 + (int16_t)((elapsedMs / 450) % 10);
+    state.speedUnit = SteedPilot::SpeedUnit::Mph;
 
     if (phase == 0) {
         state.mode = SteedPilot::DisplayMode::Navigation;
@@ -50,6 +52,14 @@ SteedPilot::NavState navigationState(SteedPilot::Maneuver maneuver, int32_t dist
     state.distanceToManeuverMeters = distanceMeters;
     state.distanceToDestinationMeters = 18400;
     state.destinationBearingDegrees = 35;
+    return state;
+}
+
+SteedPilot::NavState speedingState() {
+    SteedPilot::NavState state = navigationState(SteedPilot::Maneuver::Continue, 420);
+    state.currentSpeed = 55;
+    state.speedLimit = 50;
+    state.speedUnit = SteedPilot::SpeedUnit::Mph;
     return state;
 }
 
@@ -88,6 +98,7 @@ int exportScreenshots() {
     bool ok = true;
     ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::Continue, 420), "img/navigation-ahead.png") && ok;
     ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::TurnLeft, 180), "img/navigation-left.png") && ok;
+    ok = exportScreenshot(app, display, speedingState(), "img/navigation-speed-warning.png") && ok;
     ok = exportScreenshot(app, display, destinationState(), "img/destination-heading.png") && ok;
     ok = exportScreenshot(app, display, calibrationState(), "img/display-calibration.png") && ok;
 

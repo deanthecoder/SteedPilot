@@ -41,6 +41,24 @@ void drawCircularShell(Display& display) {
     display.circle(cx, cy, radius - 12, Color{18, 26, 28}, 1);
 }
 
+void drawSpeedWarning(Display& display, const NavState& state) {
+    if (state.currentSpeed <= 0 || state.speedLimit <= 0 || state.currentSpeed <= state.speedLimit) {
+        return;
+    }
+
+    const int fadeRange = 5;
+    int overLimit = state.currentSpeed - state.speedLimit;
+    if (overLimit > fadeRange) {
+        overLimit = fadeRange;
+    }
+
+    const int red = 80 + (155 * overLimit) / fadeRange;
+    const int green = 12 - (12 * overLimit) / fadeRange;
+    const int blue = 10 - (10 * overLimit) / fadeRange;
+
+    display.circle(centerX(display), centerY(display), faceRadius(display) - 2, Color{(uint8_t)red, (uint8_t)green, (uint8_t)blue}, 5);
+}
+
 void drawArrow(Display& display, int cx, int cy, int length, float degrees, Color color) {
     const float angle = (degrees - 90.0f) * Pi / 180.0f;
     const float sideA = angle + 2.45f;
@@ -133,18 +151,13 @@ void App::render(Display& display) {
 
 void App::renderNavigation(Display& display) {
     drawCircularShell(display);
+    drawSpeedWarning(display, _state);
 
     const int cx = centerX(display);
     const int cy = centerY(display);
     drawArrow(display, cx, cy - 34, 82, maneuverAngle(_state.maneuver), Palette::Cyan);
     drawDistance(display, cy + 66, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
     display.text(cx, 38, maneuverLabel(_state.maneuver), 2, Palette::Muted, TextAlign::Center);
-
-    if (_state.speedLimitMph > 0) {
-        char limit[24];
-        std::snprintf(limit, sizeof(limit), "limit %d", _state.speedLimitMph);
-        display.text(display.width() - 88, 70, limit, 1, Palette::Green, TextAlign::Center);
-    }
 }
 
 void App::renderDestination(Display& display) {
