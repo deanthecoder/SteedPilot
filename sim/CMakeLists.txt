@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(SteedPilotSim LANGUAGES CXX)
+project(SteedPilotSim LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,6 +12,7 @@ add_executable(steedpilot-sim
     SdlDisplay.cpp
     ../src/App.cpp
     ../src/Units.cpp
+    ../src/generated/FontAtlas.c
 )
 
 target_include_directories(steedpilot-sim PRIVATE
@@ -20,4 +21,3 @@ target_include_directories(steedpilot-sim PRIVATE
 )
 
 target_link_libraries(steedpilot-sim PRIVATE ${SDL2_LIBRARIES})
-

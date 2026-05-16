@@ -18,11 +18,40 @@
 
 class SdlDisplay final : public SteedPilot::Display {
 public:
+    /**
+     * Creates an SDL-backed display window.
+     *
+     * @param width Logical display width.
+     * @param height Logical display height.
+     * @param scale Window scale factor.
+     */
     SdlDisplay(int width, int height, int scale);
+
+    /**
+     * Releases SDL window and renderer resources.
+     */
     ~SdlDisplay() override;
 
+    /**
+     * Checks whether SDL initialization completed successfully.
+     *
+     * @return True when the display can be used.
+     */
     bool ok() const;
+
+    /**
+     * Processes pending SDL window events.
+     *
+     * @return False when the window should close.
+     */
     bool poll();
+
+    /**
+     * Saves the most recently presented frame as a PNG.
+     *
+     * @param path Destination PNG path.
+     * @return True when the file was written.
+     */
     bool savePng(const char* path) const;
 
     int width() const override;

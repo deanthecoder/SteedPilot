@@ -92,7 +92,7 @@ void drawDistance(Display& display, int y, FormattedDistance distance, Color col
     }
 
     display.text(centerX(display), y, value, 5, color, TextAlign::Center);
-    display.text(centerX(display), y + 52, distance.unit, 2, Palette::Muted, TextAlign::Center);
+    display.text(centerX(display), y + 58, distance.unit, 2, Palette::Muted, TextAlign::Center);
 }
 
 } // namespace
@@ -138,12 +138,12 @@ void App::renderNavigation(Display& display) {
     const int cy = centerY(display);
     drawArrow(display, cx, cy - 34, 82, maneuverAngle(_state.maneuver), Palette::Cyan);
     drawDistance(display, cy + 66, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
-    display.text(cx, 50, maneuverLabel(_state.maneuver), 2, Palette::Muted, TextAlign::Center);
+    display.text(cx, 38, maneuverLabel(_state.maneuver), 2, Palette::Muted, TextAlign::Center);
 
     if (_state.speedLimitMph > 0) {
         char limit[24];
         std::snprintf(limit, sizeof(limit), "limit %d", _state.speedLimitMph);
-        display.text(cx, display.height() - 56, limit, 2, Palette::Green, TextAlign::Center);
+        display.text(display.width() - 88, 70, limit, 1, Palette::Green, TextAlign::Center);
     }
 }
 
@@ -152,9 +152,9 @@ void App::renderDestination(Display& display) {
 
     const int cx = centerX(display);
     const int cy = centerY(display);
-    drawArrow(display, cx, cy - 8, 100, (float)_state.destinationBearingDegrees, Palette::Amber);
-    drawDistance(display, cy + 78, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::White);
-    display.text(cx, 48, "DEST", 2, Palette::Muted, TextAlign::Center);
+    drawArrow(display, cx, cy - 16, 88, (float)_state.destinationBearingDegrees, Palette::Amber);
+    drawDistance(display, cy + 48, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::White);
+    display.text(cx, 38, "DEST", 2, Palette::Muted, TextAlign::Center);
 }
 
 void App::renderRideInfo(Display& display) {

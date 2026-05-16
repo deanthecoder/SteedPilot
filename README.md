@@ -96,6 +96,20 @@ The desktop simulator can export reference screenshots for README updates and vi
 ![Destination heading](img/destination-heading.png)
 ![Display calibration](img/display-calibration.png)
 
+## Font Assets
+The simulator uses a generated anti-aliased single-channel font atlas that can also be consumed by the ESP32 firmware renderer.
+
+Regenerate the atlas after changing the source font, character set, or fixed text sizes:
+
+```sh
+python3 tools/generate_font_atlas.py
+```
+
+The generator writes:
+
+- `include/SteedPilot/FontAtlas.h`
+- `src/generated/FontAtlas.c`
+
 ## Interaction Model
 The device is expected to primarily use capacitive touch input.
 

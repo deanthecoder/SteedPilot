@@ -25,11 +25,23 @@ struct UnitSettings {
 };
 
 struct FormattedDistance {
+    /** Numeric distance value, with decimalPlaces indicating the fixed-point scale. */
     int32_t value;
+
+    /** Number of decimal places represented by value. */
     int8_t decimalPlaces;
+
+    /** Unit suffix to display with the value. */
     const char* unit;
 };
 
+/**
+ * Formats a distance for display using the rider's preferred unit system.
+ *
+ * @param meters Distance in meters.
+ * @param settings Unit preference settings.
+ * @return Display-ready distance value and suffix.
+ */
 FormattedDistance formatDistanceMeters(int32_t meters, UnitSettings settings);
 
 } // namespace SteedPilot

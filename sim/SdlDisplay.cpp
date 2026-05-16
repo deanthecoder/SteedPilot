@@ -10,6 +10,8 @@
 
 #include "SdlDisplay.h"
 
+#include "SteedPilot/FontAtlas.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -18,71 +20,27 @@
 
 namespace {
 
-constexpr uint8_t Font[10][7] = {
-    {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E},
-    {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
-    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F},
-    {0x1E, 0x01, 0x01, 0x0E, 0x01, 0x01, 0x1E},
-    {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02},
-    {0x1F, 0x10, 0x10, 0x1E, 0x01, 0x01, 0x1E},
-    {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E},
-    {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
-    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E},
-    {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C},
-};
-
-constexpr uint8_t Letter[][7] = {
-    {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}, // A
-    {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E}, // B
-    {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}, // C
-    {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E}, // D
-    {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}, // E
-    {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10}, // F
-    {0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F}, // G
-    {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}, // H
-    {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E}, // I
-    {0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0E}, // J
-    {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11}, // K
-    {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F}, // L
-    {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}, // M
-    {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11}, // N
-    {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, // O
-    {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}, // P
-    {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D}, // Q
-    {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}, // R
-    {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}, // S
-    {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}, // T
-    {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, // U
-    {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04}, // V
-    {0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11}, // W
-    {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11}, // X
-    {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04}, // Y
-    {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F}, // Z
-};
-
-const uint8_t* glyphFor(char value) {
-    if (value >= '0' && value <= '9') {
-        return Font[value - '0'];
-    }
-
-    if (value >= 'a' && value <= 'z') {
-        value = (char)(value - 'a' + 'A');
-    }
-
-    if (value >= 'A' && value <= 'Z') {
-        return Letter[value - 'A'];
-    }
-
-    if (value == '.') {
-        static constexpr uint8_t Dot[7] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C};
-        return Dot;
+const SteedPilotGlyph* glyphFor(char value, int size) {
+    for (uint16_t i = 0; i < SteedPilotFontGlyphCount; ++i) {
+        const SteedPilotGlyph* glyph = &SteedPilotFontGlyphs[i];
+        if (glyph->ch == value && glyph->sizeId == size) {
+            return glyph;
+        }
     }
 
     return nullptr;
 }
 
 int textWidth(const char* value, int size) {
-    return (int)std::strlen(value) * 6 * size;
+    int width = 0;
+    for (const char* ch = value; *ch; ++ch) {
+        const SteedPilotGlyph* glyph = glyphFor(*ch, size);
+        if (glyph) {
+            width += glyph->advance;
+        }
+    }
+
+    return width;
 }
 
 void writeU32(std::vector<uint8_t>& out, uint32_t value) {
@@ -340,8 +298,6 @@ void SdlDisplay::fillCircle(int cx, int cy, int radius, SteedPilot::Color color)
 }
 
 void SdlDisplay::text(int x, int y, const char* value, int size, SteedPilot::Color color, SteedPilot::TextAlign align) {
-    setColor(color);
-
     int drawX = x;
     if (align == SteedPilot::TextAlign::Center) {
         drawX -= textWidth(value, size) / 2;
@@ -350,19 +306,33 @@ void SdlDisplay::text(int x, int y, const char* value, int size, SteedPilot::Col
     }
 
     for (const char* ch = value; *ch; ++ch) {
-        const uint8_t* glyph = glyphFor(*ch);
+        const SteedPilotGlyph* glyph = glyphFor(*ch, size);
         if (glyph) {
-            for (int row = 0; row < 7; ++row) {
-                for (int col = 0; col < 5; ++col) {
-                    if (glyph[row] & (1 << (4 - col))) {
-                        SDL_Rect rect{drawX + col * size, y + row * size, size, size};
-                        SDL_RenderFillRect(_renderer, &rect);
+            const int glyphX = drawX + glyph->offsetX;
+            const int glyphY = y + glyph->offsetY;
+
+            for (int row = 0; row < glyph->h; ++row) {
+                for (int col = 0; col < glyph->w; ++col) {
+                    const int atlasIndex = (glyph->y + row) * SteedPilotFontAtlasWidth + glyph->x + col;
+                    const uint8_t coverage = SteedPilotFontAtlasAlpha[atlasIndex];
+
+                    if (coverage) {
+                        SDL_SetRenderDrawColor(
+                            _renderer,
+                            (uint8_t)((color.r * coverage) / 255),
+                            (uint8_t)((color.g * coverage) / 255),
+                            (uint8_t)((color.b * coverage) / 255),
+                            255
+                        );
+                        SDL_RenderDrawPoint(_renderer, glyphX + col, glyphY + row);
                     }
                 }
             }
-        }
 
-        drawX += 6 * size;
+            drawX += glyph->advance;
+        } else {
+            drawX += size * 6;
+        }
     }
 }
 
