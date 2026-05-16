@@ -81,9 +81,13 @@ void drawArrow(Display& display, int cx, int cy, int length, float degrees, Colo
 
 const char* maneuverLabel(Maneuver maneuver) {
     switch (maneuver) {
+        case Maneuver::SlightLeft: return "SLIGHT LEFT";
         case Maneuver::TurnLeft: return "LEFT";
+        case Maneuver::SharpLeft: return "SHARP LEFT";
+        case Maneuver::SlightRight: return "SLIGHT RIGHT";
         case Maneuver::TurnRight: return "RIGHT";
-        case Maneuver::Roundabout: return "R-ABT";
+        case Maneuver::SharpRight: return "SHARP RIGHT";
+        case Maneuver::Roundabout: return "ROUNDABOUT";
         case Maneuver::Arrive: return "ARRIVE";
         case Maneuver::Continue:
         default: return "AHEAD";
@@ -92,8 +96,12 @@ const char* maneuverLabel(Maneuver maneuver) {
 
 float maneuverAngle(Maneuver maneuver) {
     switch (maneuver) {
+        case Maneuver::SlightLeft: return -28.0f;
         case Maneuver::TurnLeft: return -55.0f;
+        case Maneuver::SharpLeft: return -90.0f;
+        case Maneuver::SlightRight: return 28.0f;
         case Maneuver::TurnRight: return 55.0f;
+        case Maneuver::SharpRight: return 90.0f;
         case Maneuver::Roundabout: return 120.0f;
         case Maneuver::Arrive: return 0.0f;
         case Maneuver::Continue:

@@ -74,6 +74,8 @@ Distances should be formatted for the rider's selected preference. The initial d
 
 Speed limit warnings should avoid adding another text readout. When current speed exceeds the limit supplied by the phone, the display can show a red circular edge warning that fades from subtle to fully opaque between the speed limit and speed limit + 5 in the rider's selected speed unit.
 
+Navigation maneuvers should support more nuance than simple left/right turns. Planned maneuver data includes slight left/right, standard left/right, sharp left/right, roundabout, and roundabout exit number such as "exit 3".
+
 ## UI Direction
 The interface should favour:
 
