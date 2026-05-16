@@ -13,6 +13,8 @@
 #include "SteedPilot/Display.h"
 
 #include <SDL.h>
+#include <cstdint>
+#include <vector>
 
 class SdlDisplay final : public SteedPilot::Display {
 public:
@@ -21,6 +23,7 @@ public:
 
     bool ok() const;
     bool poll();
+    bool savePng(const char* path) const;
 
     int width() const override;
     int height() const override;
@@ -38,7 +41,7 @@ private:
     int _height;
     SDL_Window* _window = nullptr;
     SDL_Renderer* _renderer = nullptr;
+    std::vector<uint8_t> _lastFrame;
 
     void setColor(SteedPilot::Color color);
 };
-

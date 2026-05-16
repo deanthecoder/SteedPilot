@@ -85,7 +85,11 @@ float maneuverAngle(Maneuver maneuver) {
 
 void drawDistance(Display& display, int y, FormattedDistance distance, Color color) {
     char value[16];
-    std::snprintf(value, sizeof(value), "%ld", (long)distance.value);
+    if (distance.decimalPlaces == 1) {
+        std::snprintf(value, sizeof(value), "%ld.%ld", (long)(distance.value / 10), (long)(distance.value % 10));
+    } else {
+        std::snprintf(value, sizeof(value), "%ld", (long)distance.value);
+    }
 
     display.text(centerX(display), y, value, 5, color, TextAlign::Center);
     display.text(centerX(display), y + 52, distance.unit, 2, Palette::Muted, TextAlign::Center);

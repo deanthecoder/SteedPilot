@@ -84,6 +84,18 @@ The interface should favour:
 
 The design should feel modern and instrument-like rather than retro or novelty themed.
 
+## Simulator Screens
+The desktop simulator can export reference screenshots for README updates and visual review:
+
+```sh
+./sim/build/steedpilot-sim --export-screenshots
+```
+
+![Navigation ahead](img/navigation-ahead.png)
+![Navigation left](img/navigation-left.png)
+![Destination heading](img/destination-heading.png)
+![Display calibration](img/display-calibration.png)
+
 ## Interaction Model
 The device is expected to primarily use capacitive touch input.
 

@@ -11,7 +11,10 @@
 #include "SdlDisplay.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace {
 
@@ -70,6 +73,11 @@ const uint8_t* glyphFor(char value) {
         return Letter[value - 'A'];
     }
 
+    if (value == '.') {
+        static constexpr uint8_t Dot[7] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C};
+        return Dot;
+    }
+
     return nullptr;
 }
 
@@ -77,11 +85,116 @@ int textWidth(const char* value, int size) {
     return (int)std::strlen(value) * 6 * size;
 }
 
+void writeU32(std::vector<uint8_t>& out, uint32_t value) {
+    out.push_back((uint8_t)(value >> 24));
+    out.push_back((uint8_t)(value >> 16));
+    out.push_back((uint8_t)(value >> 8));
+    out.push_back((uint8_t)value);
+}
+
+uint32_t crc32(const uint8_t* data, int length) {
+    uint32_t crc = 0xFFFFFFFFu;
+
+    for (int i = 0; i < length; ++i) {
+        crc ^= data[i];
+        for (int bit = 0; bit < 8; ++bit) {
+            crc = (crc >> 1) ^ (0xEDB88320u & (uint32_t)(-(int)(crc & 1)));
+        }
+    }
+
+    return ~crc;
+}
+
+uint32_t adler32(const std::vector<uint8_t>& data) {
+    uint32_t a = 1;
+    uint32_t b = 0;
+
+    for (uint8_t value : data) {
+        a = (a + value) % 65521;
+        b = (b + a) % 65521;
+    }
+
+    return (b << 16) | a;
+}
+
+void writeChunk(std::vector<uint8_t>& png, const char* type, const std::vector<uint8_t>& data) {
+    writeU32(png, (uint32_t)data.size());
+
+    const size_t typeStart = png.size();
+    png.push_back((uint8_t)type[0]);
+    png.push_back((uint8_t)type[1]);
+    png.push_back((uint8_t)type[2]);
+    png.push_back((uint8_t)type[3]);
+    png.insert(png.end(), data.begin(), data.end());
+
+    writeU32(png, crc32(png.data() + typeStart, (int)(png.size() - typeStart)));
+}
+
+std::vector<uint8_t> makeStoredZlib(const std::vector<uint8_t>& raw) {
+    std::vector<uint8_t> zlib;
+    zlib.push_back(0x78);
+    zlib.push_back(0x01);
+
+    size_t offset = 0;
+    while (offset < raw.size()) {
+        const uint16_t blockSize = (uint16_t)std::min((size_t)65535, raw.size() - offset);
+        const bool finalBlock = offset + blockSize == raw.size();
+
+        zlib.push_back(finalBlock ? 0x01 : 0x00);
+        zlib.push_back((uint8_t)(blockSize & 0xFF));
+        zlib.push_back((uint8_t)(blockSize >> 8));
+        zlib.push_back((uint8_t)(~blockSize & 0xFF));
+        zlib.push_back((uint8_t)(~blockSize >> 8));
+        zlib.insert(zlib.end(), raw.begin() + offset, raw.begin() + offset + blockSize);
+
+        offset += blockSize;
+    }
+
+    writeU32(zlib, adler32(raw));
+    return zlib;
+}
+
+bool writePng(const char* path, int width, int height, const std::vector<uint8_t>& rgba) {
+    std::vector<uint8_t> raw;
+    raw.reserve((size_t)(width * 4 + 1) * height);
+
+    for (int y = 0; y < height; ++y) {
+        raw.push_back(0);
+        const uint8_t* row = rgba.data() + y * width * 4;
+        raw.insert(raw.end(), row, row + width * 4);
+    }
+
+    std::vector<uint8_t> png;
+    const uint8_t signature[] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    png.insert(png.end(), signature, signature + sizeof(signature));
+
+    std::vector<uint8_t> ihdr;
+    writeU32(ihdr, (uint32_t)width);
+    writeU32(ihdr, (uint32_t)height);
+    ihdr.push_back(8);
+    ihdr.push_back(6);
+    ihdr.push_back(0);
+    ihdr.push_back(0);
+    ihdr.push_back(0);
+    writeChunk(png, "IHDR", ihdr);
+    writeChunk(png, "IDAT", makeStoredZlib(raw));
+    writeChunk(png, "IEND", {});
+
+    FILE* file = std::fopen(path, "wb");
+    if (!file) {
+        return false;
+    }
+
+    const bool ok = std::fwrite(png.data(), 1, png.size(), file) == png.size();
+    std::fclose(file);
+    return ok;
+}
+
 } // namespace
 
 SdlDisplay::SdlDisplay(int width, int height, int scale) : _width(width), _height(height) {
     SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "0");
-    SDL_SetHint(SDL_HINT_VIDEO_HIGHDPI_DISABLED, "0");
+    SDL_SetHint(SDL_HINT_VIDEO_HIGHDPI_DISABLED, "1");
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         return;
@@ -93,7 +206,7 @@ SdlDisplay::SdlDisplay(int width, int height, int scale) : _width(width), _heigh
         SDL_WINDOWPOS_CENTERED,
         width * scale,
         height * scale,
-        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
+        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
     );
 
     if (!_window) {
@@ -140,6 +253,14 @@ bool SdlDisplay::poll() {
     return true;
 }
 
+bool SdlDisplay::savePng(const char* path) const {
+    if (_lastFrame.empty()) {
+        return false;
+    }
+
+    return writePng(path, _width, _height, _lastFrame);
+}
+
 int SdlDisplay::width() const {
     return _width;
 }
@@ -154,6 +275,8 @@ void SdlDisplay::clear(SteedPilot::Color color) {
 }
 
 void SdlDisplay::present() {
+    _lastFrame.resize((size_t)_width * _height * 4);
+    SDL_RenderReadPixels(_renderer, nullptr, SDL_PIXELFORMAT_RGBA32, _lastFrame.data(), _width * 4);
     SDL_RenderPresent(_renderer);
 }
 

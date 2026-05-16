@@ -14,6 +14,8 @@
 
 #include <SDL.h>
 #include <cstdint>
+#include <filesystem>
+#include <string>
 
 namespace {
 
@@ -41,9 +43,64 @@ SteedPilot::NavState scenarioFor(uint32_t elapsedMs) {
     return state;
 }
 
+SteedPilot::NavState navigationState(SteedPilot::Maneuver maneuver, int32_t distanceMeters) {
+    SteedPilot::NavState state;
+    state.mode = SteedPilot::DisplayMode::Navigation;
+    state.maneuver = maneuver;
+    state.distanceToManeuverMeters = distanceMeters;
+    state.distanceToDestinationMeters = 18400;
+    state.destinationBearingDegrees = 35;
+    return state;
+}
+
+SteedPilot::NavState destinationState() {
+    SteedPilot::NavState state;
+    state.mode = SteedPilot::DisplayMode::Destination;
+    state.distanceToDestinationMeters = 18400;
+    state.destinationBearingDegrees = 35;
+    return state;
+}
+
+SteedPilot::NavState calibrationState() {
+    SteedPilot::NavState state;
+    state.mode = SteedPilot::DisplayMode::Calibration;
+    return state;
+}
+
+bool exportScreenshot(SteedPilot::App& app, SdlDisplay& display, const SteedPilot::NavState& state, const char* path) {
+    app.setState(state);
+    app.render(display);
+    return display.savePng(path);
+}
+
+int exportScreenshots() {
+    std::filesystem::create_directories("img");
+
+    SdlDisplay display(360, 360, 1);
+    if (!display.ok()) {
+        return 1;
+    }
+
+    SteedPilot::UnitSettings units;
+    units.distance = SteedPilot::DistanceUnitPreference::MilesMeters;
+    SteedPilot::App app(units);
+
+    bool ok = true;
+    ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::Continue, 420), "img/navigation-ahead.png") && ok;
+    ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::TurnLeft, 180), "img/navigation-left.png") && ok;
+    ok = exportScreenshot(app, display, destinationState(), "img/destination-heading.png") && ok;
+    ok = exportScreenshot(app, display, calibrationState(), "img/display-calibration.png") && ok;
+
+    return ok ? 0 : 1;
+}
+
 } // namespace
 
-int main(int, char**) {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--export-screenshots") {
+        return exportScreenshots();
+    }
+
     SdlDisplay display(360, 360, 2);
     if (!display.ok()) {
         return 1;

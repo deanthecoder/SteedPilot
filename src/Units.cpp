@@ -20,22 +20,22 @@ FormattedDistance formatDistanceMeters(int32_t meters, UnitSettings settings) {
     switch (settings.distance) {
         case DistanceUnitPreference::KilometersMeters:
             if (meters >= 1000) {
-                return {(int32_t)((meters + 50) / 100) / 10, "km"};
+                return {(int32_t)((meters + 50) / 100), 1, "km"};
             }
-            return {meters, "m"};
+            return {meters, 0, "m"};
 
         case DistanceUnitPreference::MilesFeet:
             if (meters >= 1609) {
-                return {(int32_t)((meters * 10 + 804) / 1609), "mi"};
+                return {(int32_t)((meters * 10 + 804) / 1609), 1, "mi"};
             }
-            return {(int32_t)((meters * 328 + 50) / 100), "ft"};
+            return {(int32_t)((meters * 328 + 50) / 100), 0, "ft"};
 
         case DistanceUnitPreference::MilesMeters:
         default:
             if (meters >= 1609) {
-                return {(int32_t)((meters * 10 + 804) / 1609), "mi"};
+                return {(int32_t)((meters * 10 + 804) / 1609), 1, "mi"};
             }
-            return {meters, "m"};
+            return {meters, 0, "m"};
     }
 }
 

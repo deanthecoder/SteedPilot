@@ -26,10 +26,10 @@ struct UnitSettings {
 
 struct FormattedDistance {
     int32_t value;
+    int8_t decimalPlaces;
     const char* unit;
 };
 
 FormattedDistance formatDistanceMeters(int32_t meters, UnitSettings settings);
 
 } // namespace SteedPilot
-
