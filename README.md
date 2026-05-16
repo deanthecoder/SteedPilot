@@ -1,3 +1,6 @@
+[![Twitter URL](https://img.shields.io/twitter/url/https/twitter.com/deanthecoder.svg?style=social&label=Follow%20%40deanthecoder)](https://twitter.com/deanthecoder)
+[![GitHub Repo stars](https://img.shields.io/github/stars/deanthecoder/SteedPilot?style=social&label=Star)](https://github.com/deanthecoder/SteedPilot/stargazers)
+
 # SteedPilot
 Motorcycle navigation companion powered by iPhone + ESP32 with a clean circular HUD-style display.
 
