@@ -17,7 +17,8 @@ namespace SteedPilot {
 namespace {
 
 constexpr float Pi = 3.14159265358979323846f;
-constexpr int DistanceY = 254;
+constexpr int InstructionY = 240;
+constexpr int DistanceY = 260;
 constexpr int UnitY = 318;
 constexpr int GraphicOffsetY = 15;
 constexpr float ProgressStartDegrees = -130.0f;
@@ -130,6 +131,28 @@ void drawArrow(Display& display, int cx, int cy, int length, float degrees, Colo
     display.fillCircle(cx, cy, 9, color);
 }
 
+void drawArrowHead(Display& display, int tipX, int tipY, float degrees, int length, Color color, int thickness) {
+    const float angle = (degrees - 90.0f) * Pi / 180.0f;
+    const float sideA = angle + 2.45f;
+    const float sideB = angle - 2.45f;
+    const int wingAX = tipX + (int)(std::cos(sideA) * length);
+    const int wingAY = tipY + (int)(std::sin(sideA) * length);
+    const int wingBX = tipX + (int)(std::cos(sideB) * length);
+    const int wingBY = tipY + (int)(std::sin(sideB) * length);
+
+    display.line(tipX, tipY, wingAX, wingAY, color, thickness);
+    display.line(tipX, tipY, wingBX, wingBY, color, thickness);
+}
+
+void drawUTurn(Display& display, int cx, int cy, Color color) {
+    const int radius = 34;
+    const int thickness = 9;
+    display.line(cx - radius, cy + 48, cx - radius, cy, color, thickness);
+    display.arc(cx, cy, radius, 270.0f, 180.0f, color, thickness);
+    display.line(cx + radius, cy, cx + radius, cy + 48, color, thickness);
+    drawArrowHead(display, cx + radius, cy + 48, 180.0f, 28, color, thickness);
+}
+
 void drawRoundabout(Display& display, int cx, int cy, const NavState& state) {
     const int exitCount = state.roundaboutExitCount > 0 ? state.roundaboutExitCount : 4;
     const int targetExit = state.roundaboutExit > 0 ? state.roundaboutExit : 1;
@@ -173,22 +196,23 @@ void drawRoundabout(Display& display, int cx, int cy, const NavState& state) {
 
 const char* maneuverLabel(Maneuver maneuver) {
     switch (maneuver) {
-        case Maneuver::SlightLeft: return "SLIGHT LEFT";
-        case Maneuver::TurnLeft: return "LEFT";
-        case Maneuver::SharpLeft: return "SHARP LEFT";
-        case Maneuver::SlightRight: return "SLIGHT RIGHT";
-        case Maneuver::TurnRight: return "RIGHT";
-        case Maneuver::SharpRight: return "SHARP RIGHT";
-        case Maneuver::Roundabout: return "ROUNDABOUT";
-        case Maneuver::Arrive: return "ARRIVE";
+        case Maneuver::SlightLeft: return "SLIGHT LEFT IN";
+        case Maneuver::TurnLeft: return "LEFT IN";
+        case Maneuver::SharpLeft: return "SHARP LEFT IN";
+        case Maneuver::UTurn: return "U TURN IN";
+        case Maneuver::SlightRight: return "SLIGHT RIGHT IN";
+        case Maneuver::TurnRight: return "RIGHT IN";
+        case Maneuver::SharpRight: return "SHARP RIGHT IN";
+        case Maneuver::Roundabout: return "ROUNDABOUT IN";
+        case Maneuver::Arrive: return "ARRIVE IN";
         case Maneuver::Continue:
-        default: return "AHEAD";
+        default: return "CONTINUE FOR";
     }
 }
 
 void maneuverLabelText(const NavState& state, char* buffer, int bufferSize) {
     if (state.maneuver == Maneuver::Roundabout && state.roundaboutExit > 0) {
-        std::snprintf(buffer, bufferSize, "EXIT %d", state.roundaboutExit);
+        std::snprintf(buffer, bufferSize, "ROUNDABOUT IN");
         return;
     }
 
@@ -200,6 +224,7 @@ float maneuverAngle(Maneuver maneuver) {
         case Maneuver::SlightLeft: return -28.0f;
         case Maneuver::TurnLeft: return -55.0f;
         case Maneuver::SharpLeft: return -90.0f;
+        case Maneuver::UTurn: return 180.0f;
         case Maneuver::SlightRight: return 28.0f;
         case Maneuver::TurnRight: return 55.0f;
         case Maneuver::SharpRight: return 90.0f;
@@ -271,11 +296,16 @@ void App::renderNavigation(Display& display) {
 
     if (_state.maneuver == Maneuver::Roundabout) {
         drawRoundabout(display, cx, cy - 34 + GraphicOffsetY, _state);
+        char exitLabel[16];
+        std::snprintf(exitLabel, sizeof(exitLabel), "EXIT %d", _state.roundaboutExit);
+        display.text(cx, 38, exitLabel, 2, Palette::Muted, TextAlign::Center);
+    } else if (_state.maneuver == Maneuver::UTurn) {
+        drawUTurn(display, cx, cy - 52 + GraphicOffsetY, Palette::Cyan);
     } else {
         drawArrow(display, cx, cy - 34 + GraphicOffsetY, 82, maneuverAngle(_state.maneuver), Palette::Cyan);
     }
     drawDistance(display, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
-    display.text(cx, 38, label, 2, Palette::Muted, TextAlign::Center);
+    display.text(cx, InstructionY, label, 2, Palette::Muted, TextAlign::Center);
 }
 
 void App::renderDestination(Display& display) {
@@ -286,7 +316,7 @@ void App::renderDestination(Display& display) {
     const int cy = centerY(display);
     drawArrow(display, cx, cy - 34 + GraphicOffsetY, 88, (float)_state.destinationBearingDegrees, Palette::Amber);
     drawDistance(display, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::White);
-    display.text(cx, 38, "DEST", 2, Palette::Muted, TextAlign::Center);
+    display.text(cx, InstructionY, "DESTINATION", 2, Palette::Muted, TextAlign::Center);
 }
 
 void App::renderRideInfo(Display& display) {

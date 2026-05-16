@@ -26,6 +26,7 @@ enum class Maneuver {
     SlightLeft,
     TurnLeft,
     SharpLeft,
+    UTurn,
     SlightRight,
     TurnRight,
     SharpRight,

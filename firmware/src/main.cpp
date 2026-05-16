@@ -36,7 +36,8 @@ constexpr int LCD_DATA2_PIN = 42;
 constexpr int LCD_DATA3_PIN = 41;
 constexpr int LCD_CS_PIN = 21;
 constexpr int LCD_SPI_MAX_TRANSFER_SIZE = 2048;
-constexpr int DISTANCE_Y = 254;
+constexpr int INSTRUCTION_Y = 240;
+constexpr int DISTANCE_Y = 260;
 constexpr int UNIT_Y = 318;
 constexpr int GRAPHIC_OFFSET_Y = 15;
 constexpr float PROGRESS_START_DEGREES = -130.0f;
@@ -580,6 +581,28 @@ void arrowFrame(int cx, int cy, int length, float degrees, uint16_t color) {
     fillCircleFrame(cx, cy, 9, color);
 }
 
+void arrowHeadFrame(int tipX, int tipY, float degrees, int length, uint16_t color, int thickness) {
+    const float angle = (degrees - 90.0f) * PI / 180.0f;
+    const float sideA = angle + 2.45f;
+    const float sideB = angle - 2.45f;
+    const int wingAX = tipX + (int)(cosf(sideA) * length);
+    const int wingAY = tipY + (int)(sinf(sideA) * length);
+    const int wingBX = tipX + (int)(cosf(sideB) * length);
+    const int wingBY = tipY + (int)(sinf(sideB) * length);
+
+    thickLineFrame(tipX, tipY, wingAX, wingAY, color, thickness);
+    thickLineFrame(tipX, tipY, wingBX, wingBY, color, thickness);
+}
+
+void uTurnFrame(int cx, int cy, uint16_t color) {
+    const int radius = 34;
+    const int thickness = 9;
+    thickLineFrame(cx - radius, cy + 48, cx - radius, cy, color, thickness);
+    arcFrame(cx, cy, radius, 270.0f, 180.0f, color, thickness);
+    thickLineFrame(cx + radius, cy, cx + radius, cy + 48, color, thickness);
+    arrowHeadFrame(cx + radius, cy + 48, 180.0f, 28, color, thickness);
+}
+
 void shellFrame(bool speedWarning) {
     const int cx = LCD_WIDTH / 2;
     const int cy = LCD_HEIGHT / 2;
@@ -670,9 +693,20 @@ void demoScreen(int screen) {
         shellFrame(false);
         progressFrame(32, -1, false);
         arrowFrame(180, 146 + GRAPHIC_OFFSET_Y, 88, 35.0f, amber);
-        textFrame(180, 38, "DEST", 2, muted);
+        textFrame(180, INSTRUCTION_Y, "DESTINATION", 2, muted);
         textFrame(180, DISTANCE_Y, "11.4", 5, white);
         textFrame(180, UNIT_Y, "mi", 2, muted);
+        presentFrame();
+        return;
+    }
+
+    if (screen == 5) {
+        shellFrame(false);
+        progressFrame(36, 18, true);
+        textFrame(180, INSTRUCTION_Y, "U TURN IN", 2, muted);
+        uTurnFrame(180, 128 + GRAPHIC_OFFSET_Y, cyan);
+        textFrame(180, DISTANCE_Y, "90", 5, white);
+        textFrame(180, UNIT_Y, "m", 2, muted);
         presentFrame();
         return;
     }
@@ -683,11 +717,12 @@ void demoScreen(int screen) {
     if (screen == 2) {
         roundaboutFrame();
         textFrame(180, 38, "EXIT 3", 2, muted);
+        textFrame(180, INSTRUCTION_Y, "ROUNDABOUT IN", 2, muted);
         textFrame(180, DISTANCE_Y, "260", 5, white);
         textFrame(180, UNIT_Y, "m", 2, muted);
     } else {
         const bool left = screen == 1;
-        textFrame(180, 38, left ? "LEFT" : "AHEAD", 2, muted);
+        textFrame(180, INSTRUCTION_Y, left ? "LEFT IN" : "CONTINUE FOR", 2, muted);
         arrowFrame(180, 146 + GRAPHIC_OFFSET_Y, 82, left ? -55.0f : 0.0f, cyan);
         textFrame(180, DISTANCE_Y, left ? "180" : "420", 5, white);
         textFrame(180, UNIT_Y, "m", 2, muted);
@@ -736,7 +771,7 @@ void loop() {
     const uint32_t now = millis();
 
     if (now - lastSwitch >= 3500) {
-        screen = (screen + 1) % 5;
+        screen = (screen + 1) % 6;
         demoScreen(screen);
         lastSwitch = now;
     }
