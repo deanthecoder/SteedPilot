@@ -41,6 +41,36 @@ void drawCircularShell(Display& display) {
     display.circle(cx, cy, radius - 12, Color{18, 26, 28}, 1);
 }
 
+int clampProgress(int value) {
+    if (value < 0) {
+        return -1;
+    }
+
+    if (value > 100) {
+        return 100;
+    }
+
+    return value;
+}
+
+void drawProgressArcs(Display& display, const NavState& state) {
+    const int cx = centerX(display);
+    const int cy = centerY(display);
+    const int radius = faceRadius(display);
+    const int trip = clampProgress(state.tripProgressRemaining);
+    const int maneuver = clampProgress(state.maneuverProgressRemaining);
+
+    if (trip >= 0) {
+        const float sweep = 260.0f * (float)trip / 100.0f;
+        display.arc(cx, cy, radius - 18, -130.0f, sweep, Palette::Amber, 3);
+    }
+
+    if (maneuver >= 0) {
+        const float sweep = 260.0f * (float)maneuver / 100.0f;
+        display.arc(cx, cy, radius - 30, -130.0f, sweep, Palette::Cyan, 7);
+    }
+}
+
 void drawSpeedWarning(Display& display, const NavState& state) {
     if (state.currentSpeed <= 0 || state.speedLimit <= 0 || state.currentSpeed <= state.speedLimit) {
         return;
@@ -159,6 +189,7 @@ void App::render(Display& display) {
 
 void App::renderNavigation(Display& display) {
     drawCircularShell(display);
+    drawProgressArcs(display, _state);
     drawSpeedWarning(display, _state);
 
     const int cx = centerX(display);

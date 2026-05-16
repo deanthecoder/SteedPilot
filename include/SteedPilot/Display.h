@@ -77,6 +77,19 @@ public:
     virtual void circle(int cx, int cy, int radius, Color color, int thickness = 1) = 0;
 
     /**
+     * Draws a clockwise arc outline.
+     *
+     * @param cx Center x coordinate.
+     * @param cy Center y coordinate.
+     * @param radius Arc radius in pixels.
+     * @param startDegrees Start angle in degrees, where 0 points up.
+     * @param sweepDegrees Clockwise sweep in degrees.
+     * @param color Arc color.
+     * @param thickness Arc thickness in pixels.
+     */
+    virtual void arc(int cx, int cy, int radius, float startDegrees, float sweepDegrees, Color color, int thickness = 1) = 0;
+
+    /**
      * Draws a filled circle.
      *
      * @param cx Center x coordinate.

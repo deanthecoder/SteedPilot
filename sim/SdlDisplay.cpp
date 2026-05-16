@@ -383,6 +383,35 @@ void SdlDisplay::circle(int cx, int cy, int radius, SteedPilot::Color color, int
     }
 }
 
+void SdlDisplay::arc(int cx, int cy, int radius, float startDegrees, float sweepDegrees, SteedPilot::Color color, int thickness) {
+    if (sweepDegrees <= 0.0f) {
+        return;
+    }
+
+    if (sweepDegrees > 360.0f) {
+        sweepDegrees = 360.0f;
+    }
+
+    const int steps = std::max(8, (int)(std::abs(sweepDegrees) * radius / 90.0f));
+    int previousX = 0;
+    int previousY = 0;
+
+    for (int i = 0; i <= steps; ++i) {
+        const float p = (float)i / (float)steps;
+        const float degrees = startDegrees + sweepDegrees * p;
+        const float radians = (degrees - 90.0f) * 3.14159265358979323846f / 180.0f;
+        const int x = cx + (int)(std::cos(radians) * radius);
+        const int y = cy + (int)(std::sin(radians) * radius);
+
+        if (i > 0) {
+            line(previousX, previousY, x, y, color, thickness);
+        }
+
+        previousX = x;
+        previousY = y;
+    }
+}
+
 void SdlDisplay::fillCircle(int cx, int cy, int radius, SteedPilot::Color color) {
     setColor(color);
     const int scaledRadius = ss(radius);

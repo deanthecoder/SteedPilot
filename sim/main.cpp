@@ -25,6 +25,8 @@ SteedPilot::NavState scenarioFor(uint32_t elapsedMs) {
 
     state.distanceToManeuverMeters = 420 - (int32_t)((elapsedMs / 25) % 390);
     state.distanceToDestinationMeters = 18400 - (int32_t)((elapsedMs / 100) % 2500);
+    state.maneuverProgressRemaining = 20 + (int8_t)((elapsedMs / 80) % 80);
+    state.tripProgressRemaining = 70;
     state.destinationBearingDegrees = (int16_t)((elapsedMs / 30) % 360);
     state.speedLimit = 50;
     state.currentSpeed = 47 + (int16_t)((elapsedMs / 450) % 10);
@@ -51,6 +53,8 @@ SteedPilot::NavState navigationState(SteedPilot::Maneuver maneuver, int32_t dist
     state.maneuver = maneuver;
     state.distanceToManeuverMeters = distanceMeters;
     state.distanceToDestinationMeters = 18400;
+    state.maneuverProgressRemaining = distanceMeters > 300 ? 85 : 22;
+    state.tripProgressRemaining = 68;
     state.destinationBearingDegrees = 35;
     return state;
 }

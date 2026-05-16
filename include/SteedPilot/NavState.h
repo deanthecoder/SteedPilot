@@ -43,6 +43,8 @@ struct NavState {
     Maneuver maneuver = Maneuver::Continue;
     int32_t distanceToManeuverMeters = 240;
     int32_t distanceToDestinationMeters = 18400;
+    int8_t maneuverProgressRemaining = -1;
+    int8_t tripProgressRemaining = -1;
     int16_t destinationBearingDegrees = 35;
     int8_t roundaboutExit = 0;
     int16_t currentSpeed = 0;
