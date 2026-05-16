@@ -99,6 +99,7 @@ The desktop simulator can export reference screenshots for README updates and vi
 
 ![Navigation ahead](img/navigation-ahead.png)
 ![Navigation left](img/navigation-left.png)
+![Navigation bend left](img/navigation-bend-left.png)
 ![Navigation U-turn](img/navigation-u-turn.png)
 ![Navigation roundabout](img/navigation-roundabout.png)
 ![Navigation speed warning](img/navigation-speed-warning.png)

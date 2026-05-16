@@ -594,6 +594,33 @@ void arrowHeadFrame(int tipX, int tipY, float degrees, int length, uint16_t colo
     thickLineFrame(tipX, tipY, wingBX, wingBY, color, thickness);
 }
 
+void turnLeftFrame(int cx, int cy, uint16_t color) {
+    const int thickness = 9;
+    const uint16_t continuation = rgb565(22, 46, 48);
+
+    thickLineFrame(cx, cy + 62, cx, cy - 58, continuation, 5);
+    arrowHeadFrame(cx, cy - 58, 0.0f, 20, continuation, 5);
+
+    thickLineFrame(cx, cy + 62, cx, cy - 8, color, thickness);
+    thickLineFrame(cx, cy - 8, cx - 66, cy - 8, color, thickness);
+    arrowHeadFrame(cx - 66, cy - 8, -90.0f, 28, color, thickness);
+    fillCircleFrame(cx, cy - 8, 8, color);
+}
+
+void bendLeftFrame(int cx, int cy, uint16_t color) {
+    const int radius = 55;
+    const int arcCx = cx - 25;
+    const int arcCy = cy - 5;
+    const int entryX = arcCx + radius;
+    const int entryY = arcCy;
+    const int tipX = arcCx;
+    const int tipY = arcCy - radius;
+
+    thickLineFrame(entryX, entryY + 60, entryX, entryY, color, 9);
+    arcFrame(arcCx, arcCy, radius, 0.0f, 90.0f, color, 9);
+    arrowHeadFrame(tipX, tipY, -90.0f, 28, color, 9);
+}
+
 void uTurnFrame(int cx, int cy, uint16_t color) {
     const int radius = 34;
     const int thickness = 9;
@@ -711,6 +738,17 @@ void demoScreen(int screen) {
         return;
     }
 
+    if (screen == 6) {
+        shellFrame(false);
+        progressFrame(34, 45, true);
+        textFrame(180, INSTRUCTION_Y, "BEND IN", 2, muted);
+        bendLeftFrame(180, 136 + GRAPHIC_OFFSET_Y, cyan);
+        textFrame(180, DISTANCE_Y, "120", 5, white);
+        textFrame(180, UNIT_Y, "m", 2, muted);
+        presentFrame();
+        return;
+    }
+
     shellFrame(screen == 3);
     progressFrame(screen == 1 ? 32 : 44, screen == 1 ? 22 : 58, true);
 
@@ -723,7 +761,11 @@ void demoScreen(int screen) {
     } else {
         const bool left = screen == 1;
         textFrame(180, INSTRUCTION_Y, left ? "LEFT IN" : "CONTINUE FOR", 2, muted);
-        arrowFrame(180, 146 + GRAPHIC_OFFSET_Y, 82, left ? -55.0f : 0.0f, cyan);
+        if (left) {
+            turnLeftFrame(180, 144 + GRAPHIC_OFFSET_Y, cyan);
+        } else {
+            arrowFrame(180, 146 + GRAPHIC_OFFSET_Y, 82, 0.0f, cyan);
+        }
         textFrame(180, DISTANCE_Y, left ? "180" : "420", 5, white);
         textFrame(180, UNIT_Y, "m", 2, muted);
     }
@@ -771,7 +813,7 @@ void loop() {
     const uint32_t now = millis();
 
     if (now - lastSwitch >= 3500) {
-        screen = (screen + 1) % 6;
+        screen = (screen + 1) % 7;
         demoScreen(screen);
         lastSwitch = now;
     }

@@ -144,6 +144,33 @@ void drawArrowHead(Display& display, int tipX, int tipY, float degrees, int leng
     display.line(tipX, tipY, wingBX, wingBY, color, thickness);
 }
 
+void drawTurnLeft(Display& display, int cx, int cy, Color color) {
+    const int thickness = 9;
+    const Color continuation{22, 46, 48};
+
+    display.line(cx, cy + 62, cx, cy - 58, continuation, 5);
+    drawArrowHead(display, cx, cy - 58, 0.0f, 20, continuation, 5);
+
+    display.line(cx, cy + 62, cx, cy - 8, color, thickness);
+    display.line(cx, cy - 8, cx - 66, cy - 8, color, thickness);
+    drawArrowHead(display, cx - 66, cy - 8, -90.0f, 28, color, thickness);
+    display.fillCircle(cx, cy - 8, 8, color);
+}
+
+void drawBendLeft(Display& display, int cx, int cy, Color color) {
+    const int radius = 55;
+    const int arcCx = cx - 25;
+    const int arcCy = cy - 5;
+    const int entryX = arcCx + radius;
+    const int entryY = arcCy;
+    const int tipX = arcCx;
+    const int tipY = arcCy - radius;
+
+    display.line(entryX, entryY + 60, entryX, entryY, color, 9);
+    display.arc(arcCx, arcCy, radius, 0.0f, 90.0f, color, 9);
+    drawArrowHead(display, tipX, tipY, -90.0f, 28, color, 9);
+}
+
 void drawUTurn(Display& display, int cx, int cy, Color color) {
     const int radius = 34;
     const int thickness = 9;
@@ -196,6 +223,7 @@ void drawRoundabout(Display& display, int cx, int cy, const NavState& state) {
 
 const char* maneuverLabel(Maneuver maneuver) {
     switch (maneuver) {
+        case Maneuver::BendLeft: return "BEND IN";
         case Maneuver::SlightLeft: return "SLIGHT LEFT IN";
         case Maneuver::TurnLeft: return "LEFT IN";
         case Maneuver::SharpLeft: return "SHARP LEFT IN";
@@ -221,6 +249,7 @@ void maneuverLabelText(const NavState& state, char* buffer, int bufferSize) {
 
 float maneuverAngle(Maneuver maneuver) {
     switch (maneuver) {
+        case Maneuver::BendLeft: return -35.0f;
         case Maneuver::SlightLeft: return -28.0f;
         case Maneuver::TurnLeft: return -55.0f;
         case Maneuver::SharpLeft: return -90.0f;
@@ -299,6 +328,10 @@ void App::renderNavigation(Display& display) {
         char exitLabel[16];
         std::snprintf(exitLabel, sizeof(exitLabel), "EXIT %d", _state.roundaboutExit);
         display.text(cx, 38, exitLabel, 2, Palette::Muted, TextAlign::Center);
+    } else if (_state.maneuver == Maneuver::BendLeft) {
+        drawBendLeft(display, cx, cy - 44 + GraphicOffsetY, Palette::Cyan);
+    } else if (_state.maneuver == Maneuver::TurnLeft) {
+        drawTurnLeft(display, cx, cy - 36 + GraphicOffsetY, Palette::Cyan);
     } else if (_state.maneuver == Maneuver::UTurn) {
         drawUTurn(display, cx, cy - 52 + GraphicOffsetY, Palette::Cyan);
     } else {
