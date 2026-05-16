@@ -42,7 +42,7 @@ float splashOpacity(uint32_t elapsedMs) {
 
 SteedPilot::NavState scenarioFor(uint32_t elapsedMs) {
     SteedPilot::NavState state;
-    const uint32_t phase = (elapsedMs / 3500) % 6;
+    const uint32_t phase = (elapsedMs / 3500) % 5;
 
     state.distanceToManeuverMeters = 420 - (int32_t)((elapsedMs / 25) % 390);
     state.distanceToDestinationMeters = 18400 - (int32_t)((elapsedMs / 100) % 2500);
@@ -65,10 +65,8 @@ SteedPilot::NavState scenarioFor(uint32_t elapsedMs) {
     } else if (phase == 3) {
         state.mode = SteedPilot::DisplayMode::Navigation;
         state.maneuver = SteedPilot::Maneuver::UTurn;
-    } else if (phase == 4) {
-        state.mode = SteedPilot::DisplayMode::Destination;
     } else {
-        state.mode = SteedPilot::DisplayMode::Calibration;
+        state.mode = SteedPilot::DisplayMode::Destination;
     }
 
     return state;
@@ -112,12 +110,6 @@ SteedPilot::NavState destinationState() {
     return state;
 }
 
-SteedPilot::NavState calibrationState() {
-    SteedPilot::NavState state;
-    state.mode = SteedPilot::DisplayMode::Calibration;
-    return state;
-}
-
 bool exportScreenshot(SteedPilot::App& app, SdlDisplay& display, const SteedPilot::NavState& state, const char* path) {
     app.setState(state);
     app.render(display);
@@ -154,7 +146,6 @@ int exportScreenshots() {
     ok = exportScreenshot(app, display, roundaboutState(), "img/navigation-roundabout.png") && ok;
     ok = exportScreenshot(app, display, speedingState(), "img/navigation-speed-warning.png") && ok;
     ok = exportScreenshot(app, display, destinationState(), "img/destination-heading.png") && ok;
-    ok = exportScreenshot(app, display, calibrationState(), "img/display-calibration.png") && ok;
 
     return ok ? 0 : 1;
 }

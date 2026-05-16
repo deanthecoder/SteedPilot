@@ -64,7 +64,6 @@ SteedPilot is expected to support multiple display modes:
 - Ride information.
 - Destination heading.
 - Ride summary.
-- Display calibration.
 
 The UI should remain clean and glanceable at all times.
 
@@ -104,7 +103,6 @@ The desktop simulator can export reference screenshots for README updates and vi
 ![Navigation roundabout](img/navigation-roundabout.png)
 ![Navigation speed warning](img/navigation-speed-warning.png)
 ![Destination heading](img/destination-heading.png)
-![Display calibration](img/display-calibration.png)
 ![Startup DTC logo](img/startup-dtc.png)
 
 ## Font Assets
@@ -145,13 +143,6 @@ The simulator should allow:
 - Iterating quickly without repeatedly flashing hardware.
 
 The ESP32 firmware and desktop simulator should share as much rendering and state-management logic as possible.
-
-## Display Calibration
-Circular displays can have practical visible bounds that differ slightly from the nominal square panel resolution.
-
-SteedPilot will include a one-off calibration display mode for real-device bring-up. This mode should draw concentric circles, crosshairs, diagonals, and edge markers so the usable circular area can be checked on the Waveshare 360x360 display.
-
-The calibration mode is intended for development only, but it should remain easy to run on hardware whenever display rotation, offsets, or clipping need to be checked.
 
 ## Project Principles
 - No full map rendering on the device.
