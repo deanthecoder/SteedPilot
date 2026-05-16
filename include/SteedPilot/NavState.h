@@ -44,8 +44,9 @@ struct NavState {
     int32_t distanceToManeuverMeters = 240;
     int32_t distanceToDestinationMeters = 18400;
     int8_t maneuverProgressRemaining = -1;
-    int8_t tripProgressRemaining = -1;
+    int8_t tripProgressComplete = -1;
     int16_t destinationBearingDegrees = 35;
+    int8_t roundaboutExitCount = 0;
     int8_t roundaboutExit = 0;
     int16_t currentSpeed = 0;
     int16_t speedLimit = 0;

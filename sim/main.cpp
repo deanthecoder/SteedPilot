@@ -26,7 +26,7 @@ SteedPilot::NavState scenarioFor(uint32_t elapsedMs) {
     state.distanceToManeuverMeters = 420 - (int32_t)((elapsedMs / 25) % 390);
     state.distanceToDestinationMeters = 18400 - (int32_t)((elapsedMs / 100) % 2500);
     state.maneuverProgressRemaining = 20 + (int8_t)((elapsedMs / 80) % 80);
-    state.tripProgressRemaining = 70;
+    state.tripProgressComplete = 30 + (int8_t)((elapsedMs / 300) % 55);
     state.destinationBearingDegrees = (int16_t)((elapsedMs / 30) % 360);
     state.speedLimit = 50;
     state.currentSpeed = 47 + (int16_t)((elapsedMs / 450) % 10);
@@ -54,8 +54,17 @@ SteedPilot::NavState navigationState(SteedPilot::Maneuver maneuver, int32_t dist
     state.distanceToManeuverMeters = distanceMeters;
     state.distanceToDestinationMeters = 18400;
     state.maneuverProgressRemaining = distanceMeters > 300 ? 85 : 22;
-    state.tripProgressRemaining = 68;
+    state.tripProgressComplete = 32;
     state.destinationBearingDegrees = 35;
+    return state;
+}
+
+SteedPilot::NavState roundaboutState() {
+    SteedPilot::NavState state = navigationState(SteedPilot::Maneuver::Roundabout, 260);
+    state.roundaboutExitCount = 5;
+    state.roundaboutExit = 3;
+    state.maneuverProgressRemaining = 58;
+    state.tripProgressComplete = 44;
     return state;
 }
 
@@ -72,6 +81,7 @@ SteedPilot::NavState destinationState() {
     state.mode = SteedPilot::DisplayMode::Destination;
     state.distanceToDestinationMeters = 18400;
     state.destinationBearingDegrees = 35;
+    state.tripProgressComplete = 32;
     return state;
 }
 
@@ -102,6 +112,7 @@ int exportScreenshots() {
     bool ok = true;
     ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::Continue, 420), "img/navigation-ahead.png") && ok;
     ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::TurnLeft, 180), "img/navigation-left.png") && ok;
+    ok = exportScreenshot(app, display, roundaboutState(), "img/navigation-roundabout.png") && ok;
     ok = exportScreenshot(app, display, speedingState(), "img/navigation-speed-warning.png") && ok;
     ok = exportScreenshot(app, display, destinationState(), "img/destination-heading.png") && ok;
     ok = exportScreenshot(app, display, calibrationState(), "img/display-calibration.png") && ok;

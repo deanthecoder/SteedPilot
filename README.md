@@ -74,7 +74,9 @@ Distances should be formatted for the rider's selected preference. The initial d
 
 Speed limit warnings should avoid adding another text readout. When current speed exceeds the limit supplied by the phone, the display can show a red circular edge warning that fades from subtle to fully opaque between the speed limit and speed limit + 5 in the rider's selected speed unit.
 
-Navigation maneuvers should support more nuance than simple left/right turns. Planned maneuver data includes slight left/right, standard left/right, sharp left/right, roundabout, and roundabout exit number such as "exit 3".
+Navigation maneuvers should support more nuance than simple left/right turns. Planned maneuver data includes slight left/right, standard left/right, sharp left/right, roundabout, and roundabout exit number such as "exit 3". If the phone can provide roundabout exit count as well as the target exit, the device can draw a schematic roundabout with non-target exits muted and the desired exit highlighted.
+
+Route progress can be shown with edge arcs inside the speed warning ring. The trip arc grows toward 100% as the route is completed, while the next-maneuver arc shrinks from 100% to 0% as the upcoming instruction approaches. Long stretches without a near maneuver may use a "stay on this road" style state rather than presenting an unhelpfully distant turn.
 
 ## UI Direction
 The interface should favour:
@@ -97,6 +99,7 @@ The desktop simulator can export reference screenshots for README updates and vi
 
 ![Navigation ahead](img/navigation-ahead.png)
 ![Navigation left](img/navigation-left.png)
+![Navigation roundabout](img/navigation-roundabout.png)
 ![Navigation speed warning](img/navigation-speed-warning.png)
 ![Destination heading](img/destination-heading.png)
 ![Display calibration](img/display-calibration.png)

@@ -53,21 +53,43 @@ int clampProgress(int value) {
     return value;
 }
 
-void drawProgressArcs(Display& display, const NavState& state) {
+void drawArcMarker(Display& display, int cx, int cy, int radius, float degrees, Color color, int markerRadius) {
+    const float radians = (degrees - 90.0f) * Pi / 180.0f;
+    const int x = cx + (int)(std::cos(radians) * radius);
+    const int y = cy + (int)(std::sin(radians) * radius);
+
+    display.fillCircle(x, y, markerRadius, color);
+}
+
+void drawTripProgressArc(Display& display, const NavState& state) {
     const int cx = centerX(display);
     const int cy = centerY(display);
     const int radius = faceRadius(display);
-    const int trip = clampProgress(state.tripProgressRemaining);
-    const int maneuver = clampProgress(state.maneuverProgressRemaining);
+    const int trip = clampProgress(state.tripProgressComplete);
 
     if (trip >= 0) {
+        const float start = -130.0f;
         const float sweep = 260.0f * (float)trip / 100.0f;
-        display.arc(cx, cy, radius - 18, -130.0f, sweep, Palette::Amber, 3);
+        const int arcRadius = radius - 18;
+        display.arc(cx, cy, arcRadius, start, sweep, Palette::Amber, 3);
+        drawArcMarker(display, cx, cy, arcRadius, start, Palette::Amber, 4);
+        drawArcMarker(display, cx, cy, arcRadius, start + 260.0f, Palette::Amber, 4);
     }
+}
+
+void drawManeuverProgressArc(Display& display, const NavState& state) {
+    const int cx = centerX(display);
+    const int cy = centerY(display);
+    const int radius = faceRadius(display);
+    const int maneuver = clampProgress(state.maneuverProgressRemaining);
 
     if (maneuver >= 0) {
+        const float start = -130.0f;
         const float sweep = 260.0f * (float)maneuver / 100.0f;
-        display.arc(cx, cy, radius - 30, -130.0f, sweep, Palette::Cyan, 7);
+        const int arcRadius = radius - 30;
+        display.arc(cx, cy, arcRadius, start, sweep, Palette::Cyan, 7);
+        drawArcMarker(display, cx, cy, arcRadius, start, Palette::Cyan, 5);
+        drawArcMarker(display, cx, cy, arcRadius, start + 260.0f, Palette::Cyan, 5);
     }
 }
 
@@ -86,7 +108,7 @@ void drawSpeedWarning(Display& display, const NavState& state) {
     const int green = 12 - (12 * overLimit) / fadeRange;
     const int blue = 10 - (10 * overLimit) / fadeRange;
 
-    display.circle(centerX(display), centerY(display), faceRadius(display) - 2, Color{(uint8_t)red, (uint8_t)green, (uint8_t)blue}, 5);
+    display.circle(centerX(display), centerY(display), faceRadius(display) - 2, Color{(uint8_t)red, (uint8_t)green, (uint8_t)blue}, 7);
 }
 
 void drawArrow(Display& display, int cx, int cy, int length, float degrees, Color color) {
@@ -109,6 +131,47 @@ void drawArrow(Display& display, int cx, int cy, int length, float degrees, Colo
     display.fillCircle(cx, cy, 9, color);
 }
 
+void drawRoundabout(Display& display, int cx, int cy, const NavState& state) {
+    const int exitCount = state.roundaboutExitCount > 0 ? state.roundaboutExitCount : 4;
+    const int targetExit = state.roundaboutExit > 0 ? state.roundaboutExit : 1;
+    const int radius = 42;
+    const int exitLength = 32;
+    const int mutedExitThickness = 5;
+    const int routeThickness = 9;
+    const float startDegrees = -155.0f;
+    const float stepDegrees = 250.0f / (float)(exitCount > 1 ? exitCount - 1 : 1);
+    const float targetDegrees = startDegrees + stepDegrees * (float)(targetExit - 1);
+
+    display.circle(cx, cy, radius, Palette::Dim, mutedExitThickness);
+    for (int i = 0; i < exitCount; ++i) {
+        const float degrees = startDegrees + stepDegrees * (float)i;
+        const float radians = (degrees - 90.0f) * Pi / 180.0f;
+        const int innerX = cx + (int)(std::cos(radians) * (radius + mutedExitThickness / 2));
+        const int innerY = cy + (int)(std::sin(radians) * (radius + mutedExitThickness / 2));
+        const int outerX = cx + (int)(std::cos(radians) * (radius + exitLength));
+        const int outerY = cy + (int)(std::sin(radians) * (radius + exitLength));
+
+        display.line(innerX, innerY, outerX, outerY, Palette::Dim, mutedExitThickness);
+    }
+
+    float routeSweep = targetDegrees - 180.0f;
+    if (routeSweep < 0.0f) {
+        routeSweep += 360.0f;
+    }
+
+    display.line(cx, cy + radius + exitLength, cx, cy + radius + routeThickness / 2, Palette::Cyan, routeThickness);
+    display.arc(cx, cy, radius, 180.0f, routeSweep, Palette::Cyan, routeThickness);
+
+    const float targetRadians = (targetDegrees - 90.0f) * Pi / 180.0f;
+    const int targetInnerX = cx + (int)(std::cos(targetRadians) * (radius + routeThickness / 2));
+    const int targetInnerY = cy + (int)(std::sin(targetRadians) * (radius + routeThickness / 2));
+    const int targetOuterX = cx + (int)(std::cos(targetRadians) * (radius + exitLength));
+    const int targetOuterY = cy + (int)(std::sin(targetRadians) * (radius + exitLength));
+
+    display.line(targetInnerX, targetInnerY, targetOuterX, targetOuterY, Palette::Cyan, routeThickness);
+    display.fillCircle(targetOuterX, targetOuterY, 7, Palette::Cyan);
+}
+
 const char* maneuverLabel(Maneuver maneuver) {
     switch (maneuver) {
         case Maneuver::SlightLeft: return "SLIGHT LEFT";
@@ -122,6 +185,15 @@ const char* maneuverLabel(Maneuver maneuver) {
         case Maneuver::Continue:
         default: return "AHEAD";
     }
+}
+
+void maneuverLabelText(const NavState& state, char* buffer, int bufferSize) {
+    if (state.maneuver == Maneuver::Roundabout && state.roundaboutExit > 0) {
+        std::snprintf(buffer, bufferSize, "EXIT %d", state.roundaboutExit);
+        return;
+    }
+
+    std::snprintf(buffer, bufferSize, "%s", maneuverLabel(state.maneuver));
 }
 
 float maneuverAngle(Maneuver maneuver) {
@@ -189,18 +261,27 @@ void App::render(Display& display) {
 
 void App::renderNavigation(Display& display) {
     drawCircularShell(display);
-    drawProgressArcs(display, _state);
+    drawTripProgressArc(display, _state);
+    drawManeuverProgressArc(display, _state);
     drawSpeedWarning(display, _state);
 
     const int cx = centerX(display);
     const int cy = centerY(display);
-    drawArrow(display, cx, cy - 34, 82, maneuverAngle(_state.maneuver), Palette::Cyan);
+    char label[24];
+    maneuverLabelText(_state, label, sizeof(label));
+
+    if (_state.maneuver == Maneuver::Roundabout) {
+        drawRoundabout(display, cx, cy - 34, _state);
+    } else {
+        drawArrow(display, cx, cy - 34, 82, maneuverAngle(_state.maneuver), Palette::Cyan);
+    }
     drawDistance(display, cy + 66, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
-    display.text(cx, 38, maneuverLabel(_state.maneuver), 2, Palette::Muted, TextAlign::Center);
+    display.text(cx, 38, label, 2, Palette::Muted, TextAlign::Center);
 }
 
 void App::renderDestination(Display& display) {
     drawCircularShell(display);
+    drawTripProgressArc(display, _state);
 
     const int cx = centerX(display);
     const int cy = centerY(display);
