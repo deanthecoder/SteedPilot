@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(SDL2 REQUIRED)
+find_package(ZLIB REQUIRED)
 
 add_executable(steedpilot-sim
     main.cpp
@@ -20,4 +21,4 @@ target_include_directories(steedpilot-sim PRIVATE
     ${SDL2_INCLUDE_DIRS}
 )
 
-target_link_libraries(steedpilot-sim PRIVATE ${SDL2_LIBRARIES})
+target_link_libraries(steedpilot-sim PRIVATE ${SDL2_LIBRARIES} ZLIB::ZLIB)

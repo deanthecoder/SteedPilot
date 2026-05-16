@@ -103,6 +103,7 @@ The desktop simulator can export reference screenshots for README updates and vi
 ![Navigation speed warning](img/navigation-speed-warning.png)
 ![Destination heading](img/destination-heading.png)
 ![Display calibration](img/display-calibration.png)
+![Startup DTC logo](img/startup-dtc.png)
 
 ## Font Assets
 The simulator uses a generated anti-aliased single-channel font atlas that can also be consumed by the ESP32 firmware renderer.

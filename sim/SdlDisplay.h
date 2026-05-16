@@ -16,6 +16,12 @@
 #include <cstdint>
 #include <vector>
 
+struct SdlImage {
+    int width = 0;
+    int height = 0;
+    std::vector<uint8_t> rgba;
+};
+
 class SdlDisplay final : public SteedPilot::Display {
 public:
     /**
@@ -53,6 +59,23 @@ public:
      * @return True when the file was written.
      */
     bool savePng(const char* path) const;
+
+    /**
+     * Loads a PNG image from disk.
+     *
+     * @param path Source PNG path.
+     * @param image Destination image buffer.
+     * @return True when the image was decoded.
+     */
+    bool loadPng(const char* path, SdlImage& image) const;
+
+    /**
+     * Draws an image centered on the display with an opacity multiplier.
+     *
+     * @param image Source image.
+     * @param opacity Opacity from 0.0 to 1.0.
+     */
+    void drawImageCentered(const SdlImage& image, float opacity);
 
     int width() const override;
     int height() const override;

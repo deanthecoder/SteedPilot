@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include <zlib.h>
 
 namespace {
 
@@ -149,6 +150,157 @@ bool writePng(const char* path, int width, int height, const std::vector<uint8_t
     return ok;
 }
 
+uint8_t paeth(uint8_t a, uint8_t b, uint8_t c) {
+    const int p = (int)a + (int)b - (int)c;
+    const int pa = std::abs(p - (int)a);
+    const int pb = std::abs(p - (int)b);
+    const int pc = std::abs(p - (int)c);
+
+    if (pa <= pb && pa <= pc) {
+        return a;
+    }
+
+    if (pb <= pc) {
+        return b;
+    }
+
+    return c;
+}
+
+bool readFile(const char* path, std::vector<uint8_t>& data) {
+    FILE* file = std::fopen(path, "rb");
+    if (!file) {
+        return false;
+    }
+
+    std::fseek(file, 0, SEEK_END);
+    const long size = std::ftell(file);
+    std::fseek(file, 0, SEEK_SET);
+
+    if (size <= 0) {
+        std::fclose(file);
+        return false;
+    }
+
+    data.resize((size_t)size);
+    const bool ok = std::fread(data.data(), 1, data.size(), file) == data.size();
+    std::fclose(file);
+    return ok;
+}
+
+uint32_t readU32(const uint8_t* data) {
+    return ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) | ((uint32_t)data[2] << 8) | (uint32_t)data[3];
+}
+
+bool decodePng(const char* path, SdlImage& image) {
+    std::vector<uint8_t> png;
+    if (!readFile(path, png) || png.size() < 33) {
+        return false;
+    }
+
+    const uint8_t signature[] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    if (std::memcmp(png.data(), signature, sizeof(signature)) != 0) {
+        return false;
+    }
+
+    int width = 0;
+    int height = 0;
+    uint8_t bitDepth = 0;
+    uint8_t colorType = 0;
+    std::vector<uint8_t> idat;
+
+    size_t offset = 8;
+    while (offset + 12 <= png.size()) {
+        const uint32_t length = readU32(png.data() + offset);
+        offset += 4;
+        if (offset + 4 + length + 4 > png.size()) {
+            return false;
+        }
+
+        const char* type = (const char*)png.data() + offset;
+        offset += 4;
+        const uint8_t* chunk = png.data() + offset;
+
+        if (std::memcmp(type, "IHDR", 4) == 0) {
+            width = (int)readU32(chunk);
+            height = (int)readU32(chunk + 4);
+            bitDepth = chunk[8];
+            colorType = chunk[9];
+        } else if (std::memcmp(type, "IDAT", 4) == 0) {
+            idat.insert(idat.end(), chunk, chunk + length);
+        } else if (std::memcmp(type, "IEND", 4) == 0) {
+            break;
+        }
+
+        offset += length + 4;
+    }
+
+    if (width <= 0 || height <= 0 || bitDepth != 8 || (colorType != 4 && colorType != 6) || idat.empty()) {
+        return false;
+    }
+
+    const int bytesPerPixel = colorType == 4 ? 2 : 4;
+    const int stride = width * bytesPerPixel;
+    std::vector<uint8_t> filtered((size_t)(stride + 1) * height);
+    uLongf filteredSize = (uLongf)filtered.size();
+
+    if (uncompress(filtered.data(), &filteredSize, idat.data(), (uLong)idat.size()) != Z_OK || filteredSize != filtered.size()) {
+        return false;
+    }
+
+    std::vector<uint8_t> raw((size_t)stride * height);
+    for (int y = 0; y < height; ++y) {
+        const uint8_t filter = filtered[(size_t)y * (stride + 1)];
+        const uint8_t* src = filtered.data() + (size_t)y * (stride + 1) + 1;
+        uint8_t* dst = raw.data() + (size_t)y * stride;
+        const uint8_t* prev = y > 0 ? raw.data() + (size_t)(y - 1) * stride : nullptr;
+
+        for (int x = 0; x < stride; ++x) {
+            const uint8_t left = x >= bytesPerPixel ? dst[x - bytesPerPixel] : 0;
+            const uint8_t up = prev ? prev[x] : 0;
+            const uint8_t upLeft = prev && x >= bytesPerPixel ? prev[x - bytesPerPixel] : 0;
+            uint8_t predictor = 0;
+
+            if (filter == 1) {
+                predictor = left;
+            } else if (filter == 2) {
+                predictor = up;
+            } else if (filter == 3) {
+                predictor = (uint8_t)(((int)left + (int)up) / 2);
+            } else if (filter == 4) {
+                predictor = paeth(left, up, upLeft);
+            } else if (filter != 0) {
+                return false;
+            }
+
+            dst[x] = (uint8_t)(src[x] + predictor);
+        }
+    }
+
+    image.width = width;
+    image.height = height;
+    image.rgba.resize((size_t)width * height * 4);
+
+    for (int i = 0; i < width * height; ++i) {
+        const uint8_t* src = raw.data() + i * bytesPerPixel;
+        uint8_t* dst = image.rgba.data() + i * 4;
+
+        if (colorType == 4) {
+            dst[0] = src[0];
+            dst[1] = src[0];
+            dst[2] = src[0];
+            dst[3] = src[1];
+        } else {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = src[3];
+        }
+    }
+
+    return true;
+}
+
 } // namespace
 
 SdlDisplay::SdlDisplay(int width, int height, int scale) : _width(width), _height(height) {
@@ -247,6 +399,44 @@ bool SdlDisplay::savePng(const char* path) const {
     }
 
     return writePng(path, _width, _height, _lastFrame);
+}
+
+bool SdlDisplay::loadPng(const char* path, SdlImage& image) const {
+    return decodePng(path, image);
+}
+
+void SdlDisplay::drawImageCentered(const SdlImage& image, float opacity) {
+    if (image.rgba.empty() || opacity <= 0.0f) {
+        return;
+    }
+
+    if (opacity > 1.0f) {
+        opacity = 1.0f;
+    }
+
+    const int left = (_width - image.width) / 2;
+    const int top = (_height - image.height) / 2 + 20;
+
+    SDL_SetRenderTarget(_renderer, _target);
+    for (int y = 0; y < image.height; ++y) {
+        for (int x = 0; x < image.width; ++x) {
+            const uint8_t* pixel = image.rgba.data() + (y * image.width + x) * 4;
+            const int alpha = (int)((float)pixel[3] * opacity);
+            if (alpha <= 0) {
+                continue;
+            }
+
+            SDL_SetRenderDrawColor(
+                _renderer,
+                (uint8_t)((pixel[0] * alpha) / 255),
+                (uint8_t)((pixel[1] * alpha) / 255),
+                (uint8_t)((pixel[2] * alpha) / 255),
+                255
+            );
+            const SDL_Rect rect{sx(left + x), sy(top + y), ss(1), ss(1)};
+            SDL_RenderFillRect(_renderer, &rect);
+        }
+    }
 }
 
 int SdlDisplay::width() const {

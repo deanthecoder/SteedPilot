@@ -17,6 +17,11 @@ namespace SteedPilot {
 namespace {
 
 constexpr float Pi = 3.14159265358979323846f;
+constexpr int DistanceY = 254;
+constexpr int UnitY = 318;
+constexpr int GraphicOffsetY = 15;
+constexpr float ProgressStartDegrees = -130.0f;
+constexpr float ProgressSweepDegrees = 260.0f;
 
 int centerX(Display& display) {
     return display.width() / 2;
@@ -32,13 +37,7 @@ int faceRadius(Display& display) {
 }
 
 void drawCircularShell(Display& display) {
-    const int cx = centerX(display);
-    const int cy = centerY(display);
-    const int radius = faceRadius(display);
-
     display.clear(Palette::Black);
-    display.circle(cx, cy, radius, Palette::Dim, 2);
-    display.circle(cx, cy, radius - 12, Color{18, 26, 28}, 1);
 }
 
 int clampProgress(int value) {
@@ -68,12 +67,12 @@ void drawTripProgressArc(Display& display, const NavState& state) {
     const int trip = clampProgress(state.tripProgressComplete);
 
     if (trip >= 0) {
-        const float start = -130.0f;
-        const float sweep = 260.0f * (float)trip / 100.0f;
+        const float sweep = ProgressSweepDegrees * (float)trip / 100.0f;
         const int arcRadius = radius - 18;
-        display.arc(cx, cy, arcRadius, start, sweep, Palette::Amber, 3);
-        drawArcMarker(display, cx, cy, arcRadius, start, Palette::Amber, 4);
-        drawArcMarker(display, cx, cy, arcRadius, start + 260.0f, Palette::Amber, 4);
+        display.arc(cx, cy, arcRadius, ProgressStartDegrees, ProgressSweepDegrees, Color{38, 32, 17}, 3);
+        display.arc(cx, cy, arcRadius, ProgressStartDegrees, sweep, Palette::Amber, 3);
+        drawArcMarker(display, cx, cy, arcRadius, ProgressStartDegrees, Palette::Amber, 4);
+        drawArcMarker(display, cx, cy, arcRadius, ProgressStartDegrees + ProgressSweepDegrees, Palette::Amber, 4);
     }
 }
 
@@ -84,12 +83,12 @@ void drawManeuverProgressArc(Display& display, const NavState& state) {
     const int maneuver = clampProgress(state.maneuverProgressRemaining);
 
     if (maneuver >= 0) {
-        const float start = -130.0f;
-        const float sweep = 260.0f * (float)maneuver / 100.0f;
+        const float sweep = ProgressSweepDegrees * (float)maneuver / 100.0f;
         const int arcRadius = radius - 30;
-        display.arc(cx, cy, arcRadius, start, sweep, Palette::Cyan, 7);
-        drawArcMarker(display, cx, cy, arcRadius, start, Palette::Cyan, 5);
-        drawArcMarker(display, cx, cy, arcRadius, start + 260.0f, Palette::Cyan, 5);
+        display.arc(cx, cy, arcRadius, ProgressStartDegrees, ProgressSweepDegrees, Color{8, 30, 32}, 7);
+        display.arc(cx, cy, arcRadius, ProgressStartDegrees, sweep, Palette::Cyan, 7);
+        drawArcMarker(display, cx, cy, arcRadius, ProgressStartDegrees, Palette::Cyan, 5);
+        drawArcMarker(display, cx, cy, arcRadius, ProgressStartDegrees + ProgressSweepDegrees, Palette::Cyan, 5);
     }
 }
 
@@ -211,7 +210,7 @@ float maneuverAngle(Maneuver maneuver) {
     }
 }
 
-void drawDistance(Display& display, int y, FormattedDistance distance, Color color) {
+void drawDistance(Display& display, FormattedDistance distance, Color color) {
     char value[16];
     if (distance.decimalPlaces == 1) {
         std::snprintf(value, sizeof(value), "%ld.%ld", (long)(distance.value / 10), (long)(distance.value % 10));
@@ -219,8 +218,8 @@ void drawDistance(Display& display, int y, FormattedDistance distance, Color col
         std::snprintf(value, sizeof(value), "%ld", (long)distance.value);
     }
 
-    display.text(centerX(display), y, value, 5, color, TextAlign::Center);
-    display.text(centerX(display), y + 58, distance.unit, 2, Palette::Muted, TextAlign::Center);
+    display.text(centerX(display), DistanceY, value, 5, color, TextAlign::Center);
+    display.text(centerX(display), UnitY, distance.unit, 2, Palette::Muted, TextAlign::Center);
 }
 
 } // namespace
@@ -271,11 +270,11 @@ void App::renderNavigation(Display& display) {
     maneuverLabelText(_state, label, sizeof(label));
 
     if (_state.maneuver == Maneuver::Roundabout) {
-        drawRoundabout(display, cx, cy - 34, _state);
+        drawRoundabout(display, cx, cy - 34 + GraphicOffsetY, _state);
     } else {
-        drawArrow(display, cx, cy - 34, 82, maneuverAngle(_state.maneuver), Palette::Cyan);
+        drawArrow(display, cx, cy - 34 + GraphicOffsetY, 82, maneuverAngle(_state.maneuver), Palette::Cyan);
     }
-    drawDistance(display, cy + 66, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
+    drawDistance(display, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
     display.text(cx, 38, label, 2, Palette::Muted, TextAlign::Center);
 }
 
@@ -285,8 +284,8 @@ void App::renderDestination(Display& display) {
 
     const int cx = centerX(display);
     const int cy = centerY(display);
-    drawArrow(display, cx, cy - 16, 88, (float)_state.destinationBearingDegrees, Palette::Amber);
-    drawDistance(display, cy + 48, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::White);
+    drawArrow(display, cx, cy - 34 + GraphicOffsetY, 88, (float)_state.destinationBearingDegrees, Palette::Amber);
+    drawDistance(display, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::White);
     display.text(cx, 38, "DEST", 2, Palette::Muted, TextAlign::Center);
 }
 
@@ -294,7 +293,7 @@ void App::renderRideInfo(Display& display) {
     drawCircularShell(display);
 
     display.text(centerX(display), centerY(display) - 36, "RIDE", 4, Palette::White, TextAlign::Center);
-    drawDistance(display, centerY(display) + 38, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::Amber);
+    drawDistance(display, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::Amber);
 }
 
 void App::renderCalibration(Display& display) {

@@ -19,6 +19,27 @@
 
 namespace {
 
+constexpr uint32_t SplashFadeInMs = 900;
+constexpr uint32_t SplashHoldMs = 2000;
+constexpr uint32_t SplashFadeOutMs = 900;
+constexpr uint32_t SplashTotalMs = SplashFadeInMs + SplashHoldMs + SplashFadeOutMs;
+
+float splashOpacity(uint32_t elapsedMs) {
+    if (elapsedMs < SplashFadeInMs) {
+        return (float)elapsedMs / (float)SplashFadeInMs;
+    }
+
+    if (elapsedMs < SplashFadeInMs + SplashHoldMs) {
+        return 1.0f;
+    }
+
+    if (elapsedMs < SplashTotalMs) {
+        return 1.0f - (float)(elapsedMs - SplashFadeInMs - SplashHoldMs) / (float)SplashFadeOutMs;
+    }
+
+    return 0.0f;
+}
+
 SteedPilot::NavState scenarioFor(uint32_t elapsedMs) {
     SteedPilot::NavState state;
     const uint32_t phase = (elapsedMs / 3500) % 4;
@@ -97,6 +118,13 @@ bool exportScreenshot(SteedPilot::App& app, SdlDisplay& display, const SteedPilo
     return display.savePng(path);
 }
 
+bool exportSplashScreenshot(SdlDisplay& display, const SdlImage& logo, const char* path) {
+    display.clear(SteedPilot::Palette::Black);
+    display.drawImageCentered(logo, 1.0f);
+    display.present();
+    return display.savePng(path);
+}
+
 int exportScreenshots() {
     std::filesystem::create_directories("img");
 
@@ -108,8 +136,11 @@ int exportScreenshots() {
     SteedPilot::UnitSettings units;
     units.distance = SteedPilot::DistanceUnitPreference::MilesMeters;
     SteedPilot::App app(units);
+    SdlImage logo;
 
     bool ok = true;
+    ok = display.loadPng("img/DTC.png", logo) && ok;
+    ok = exportSplashScreenshot(display, logo, "img/startup-dtc.png") && ok;
     ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::Continue, 420), "img/navigation-ahead.png") && ok;
     ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::TurnLeft, 180), "img/navigation-left.png") && ok;
     ok = exportScreenshot(app, display, roundaboutState(), "img/navigation-roundabout.png") && ok;
@@ -135,6 +166,8 @@ int main(int argc, char** argv) {
     SteedPilot::UnitSettings units;
     units.distance = SteedPilot::DistanceUnitPreference::MilesMeters;
     SteedPilot::App app(units);
+    SdlImage logo;
+    display.loadPng("img/DTC.png", logo);
 
     const uint32_t start = SDL_GetTicks();
     uint32_t last = start;
@@ -144,8 +177,15 @@ int main(int argc, char** argv) {
         app.tick(now - last);
         last = now;
 
-        app.setState(scenarioFor(now - start));
-        app.render(display);
+        const uint32_t elapsed = now - start;
+        if (elapsed < SplashTotalMs && !logo.rgba.empty()) {
+            display.clear(SteedPilot::Palette::Black);
+            display.drawImageCentered(logo, splashOpacity(elapsed));
+            display.present();
+        } else {
+            app.setState(scenarioFor(elapsed - SplashTotalMs));
+            app.render(display);
+        }
 
         SDL_Delay(16);
     }
