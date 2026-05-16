@@ -1,0 +1,42 @@
+// Code authored by Dean Edis (DeanTheCoder).
+// Anyone is free to copy, modify, use, compile, or distribute this software,
+// either in source code form or as a compiled binary, for any purpose.
+//
+// If you modify the code, please retain this copyright header,
+// and consider contributing back to the repository or letting us know
+// about your modifications. Your contributions are valued!
+//
+// THE SOFTWARE IS PROVIDED AS IS, WITHOUT WARRANTY OF ANY KIND.
+
+#pragma once
+
+#include <cstdint>
+
+namespace SteedPilot {
+
+enum class DisplayMode {
+    Navigation,
+    Destination,
+    RideInfo,
+    Calibration
+};
+
+enum class Maneuver {
+    Continue,
+    TurnLeft,
+    TurnRight,
+    Roundabout,
+    Arrive
+};
+
+struct NavState {
+    DisplayMode mode = DisplayMode::Navigation;
+    Maneuver maneuver = Maneuver::Continue;
+    int32_t distanceToManeuverMeters = 240;
+    int32_t distanceToDestinationMeters = 18400;
+    int16_t destinationBearingDegrees = 35;
+    int16_t speedLimitMph = 0;
+    bool connected = true;
+};
+
+} // namespace SteedPilot

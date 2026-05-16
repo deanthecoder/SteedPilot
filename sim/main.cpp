@@ -1,0 +1,71 @@
+// Code authored by Dean Edis (DeanTheCoder).
+// Anyone is free to copy, modify, use, compile, or distribute this software,
+// either in source code form or as a compiled binary, for any purpose.
+//
+// If you modify the code, please retain this copyright header,
+// and consider contributing back to the repository or letting us know
+// about your modifications. Your contributions are valued!
+//
+// THE SOFTWARE IS PROVIDED AS IS, WITHOUT WARRANTY OF ANY KIND.
+
+#include "SdlDisplay.h"
+
+#include "SteedPilot/App.h"
+
+#include <SDL.h>
+#include <cstdint>
+
+namespace {
+
+SteedPilot::NavState scenarioFor(uint32_t elapsedMs) {
+    SteedPilot::NavState state;
+    const uint32_t phase = (elapsedMs / 3500) % 4;
+
+    state.distanceToManeuverMeters = 420 - (int32_t)((elapsedMs / 25) % 390);
+    state.distanceToDestinationMeters = 18400 - (int32_t)((elapsedMs / 100) % 2500);
+    state.destinationBearingDegrees = (int16_t)((elapsedMs / 30) % 360);
+    state.speedLimitMph = 50;
+
+    if (phase == 0) {
+        state.mode = SteedPilot::DisplayMode::Navigation;
+        state.maneuver = SteedPilot::Maneuver::Continue;
+    } else if (phase == 1) {
+        state.mode = SteedPilot::DisplayMode::Navigation;
+        state.maneuver = SteedPilot::Maneuver::TurnLeft;
+    } else if (phase == 2) {
+        state.mode = SteedPilot::DisplayMode::Destination;
+    } else {
+        state.mode = SteedPilot::DisplayMode::Calibration;
+    }
+
+    return state;
+}
+
+} // namespace
+
+int main(int, char**) {
+    SdlDisplay display(360, 360, 2);
+    if (!display.ok()) {
+        return 1;
+    }
+
+    SteedPilot::UnitSettings units;
+    units.distance = SteedPilot::DistanceUnitPreference::MilesMeters;
+    SteedPilot::App app(units);
+
+    const uint32_t start = SDL_GetTicks();
+    uint32_t last = start;
+
+    while (display.poll()) {
+        const uint32_t now = SDL_GetTicks();
+        app.tick(now - last);
+        last = now;
+
+        app.setState(scenarioFor(now - start));
+        app.render(display);
+
+        SDL_Delay(16);
+    }
+
+    return 0;
+}
