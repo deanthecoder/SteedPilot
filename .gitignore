@@ -5,6 +5,7 @@
 build/
 cmake-build-*/
 sim/steedpilot-sim
+DerivedData/
 
 # VS Code / PlatformIO
 .vscode/.browse.c_cpp.db*
@@ -12,7 +13,14 @@ sim/steedpilot-sim
 .vscode/launch.json
 .vscode/ipch/
 
+# Xcode
+*.xcuserstate
+*.xcscmblueprint
+*.moved-aside
+xcuserdata/
+ios/SteedPilot/SteedPilot.xcodeproj/project.xcworkspace/xcuserdata/
+ios/SteedPilot/SteedPilot.xcodeproj/xcuserdata/
+
 # Logs and generated files
 *.log
 *.tmp
-

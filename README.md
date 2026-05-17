@@ -153,6 +153,17 @@ Interactions should be designed around:
 
 The UI should remain stable and resistant to accidental input caused by vibration.
 
+## iOS App
+An initial SwiftUI fixture-sender app lives in `ios/SteedPilot`.
+
+Open it in Xcode:
+
+```sh
+open ios/SteedPilot/SteedPilot.xcodeproj
+```
+
+The first scaffold scans for the `SteedPilot` BLE service and sends built-in `state`, `update`, and `heartbeat` packets to the ESP32. Run it on a physical iPhone for live BLE testing; the iOS simulator is useful for UI layout only.
+
 ## Development Approach
 A desktop simulator will be used for rapid UI iteration and development.
 
