@@ -28,6 +28,7 @@ final class BluetoothNavSender: NSObject, ObservableObject {
     private var isWriting = false
     private var heartbeatTimer: Timer?
     private var replayWorkItems: [DispatchWorkItem] = []
+    private var isConnecting = false
 
     override init() {
         super.init()
@@ -52,8 +53,24 @@ final class BluetoothNavSender: NSObject, ObservableObject {
             return
         }
 
+        scanForSteedPilot()
+    }
+
+    /**
+     * Starts scanning for the SteedPilot peripheral if not already connected.
+     */
+    private func scanForSteedPilot() {
+        guard let central, central.state == .poweredOn else {
+            status = "Bluetooth unavailable"
+            return
+        }
+
+        if peripheral?.state == .connected || isConnecting {
+            return
+        }
+
         status = "Scanning"
-        central?.scanForPeripherals(withServices: [serviceUuid])
+        central.scanForPeripherals(withServices: [serviceUuid])
     }
 
     /**
@@ -164,11 +181,20 @@ final class BluetoothNavSender: NSObject, ObservableObject {
 
 extension BluetoothNavSender: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        status = central.state == .poweredOn ? "Ready" : "Bluetooth unavailable"
+        if central.state == .poweredOn {
+            scanForSteedPilot()
+        } else {
+            status = "Bluetooth unavailable"
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        if isConnecting || self.peripheral?.state == .connected {
+            return
+        }
+
         status = "Connecting"
+        isConnecting = true
         central.stopScan()
         self.peripheral = peripheral
         peripheral.delegate = self
@@ -177,17 +203,22 @@ extension BluetoothNavSender: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         status = "Discovering"
+        isConnecting = false
         peripheral.discoverServices([serviceUuid])
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         status = "Disconnected"
+        isConnecting = false
         characteristic = nil
         stopHeartbeatTimer()
+        scanForSteedPilot()
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         status = "Connect failed"
+        isConnecting = false
+        scanForSteedPilot()
     }
 }
 
