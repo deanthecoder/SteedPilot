@@ -22,13 +22,16 @@ constexpr uint32_t SplashHoldMs = 2000;
 constexpr uint32_t SplashFadeOutMs = 900;
 constexpr uint32_t SplashTotalMs = SplashFadeInMs + SplashHoldMs + SplashFadeOutMs;
 constexpr uint32_t DemoScreenMs = 3500;
+constexpr uint32_t NoPhoneTimeoutMs = 10000;
 constexpr int DemoScreenCount = 7;
 
 FirmwareDisplay display;
 FirmwareBle ble;
 SteedPilot::App app;
 bool liveBleMode = false;
+bool noPhoneVisible = false;
 volatile bool pendingBleState = false;
+uint32_t lastPacketMs = 0;
 SteedPilot::NavState nextBleState;
 
 uint8_t splashOpacity(uint32_t elapsedMs) {
@@ -113,9 +116,22 @@ void renderDemoScreen(int screen) {
 
 void applyBleState(const SteedPilot::NavState& state) {
     liveBleMode = true;
+    noPhoneVisible = false;
+    lastPacketMs = millis();
     nextBleState = state;
     pendingBleState = true;
     Serial.printf("BLE state queued: mode=%d maneuver=%d distance=%ld\n", (int)state.mode, (int)state.maneuver, (long)state.distanceToManeuverMeters);
+}
+
+void renderNoPhone() {
+    SteedPilot::NavState state;
+    state.mode = SteedPilot::DisplayMode::NoPhone;
+    state.connected = false;
+    state.linkState = SteedPilot::LinkState::Disconnected;
+    app.setState(state);
+    app.render(display);
+    noPhoneVisible = true;
+    Serial.println("No-phone screen rendered");
 }
 
 } // namespace
@@ -153,7 +169,12 @@ void loop() {
         pendingBleState = false;
         app.setState(nextBleState);
         app.render(display);
+        noPhoneVisible = false;
         Serial.printf("BLE state rendered: mode=%d maneuver=%d distance=%ld\n", (int)nextBleState.mode, (int)nextBleState.maneuver, (long)nextBleState.distanceToManeuverMeters);
+    }
+
+    if (liveBleMode && !pendingBleState && !noPhoneVisible && now - lastPacketMs >= NoPhoneTimeoutMs) {
+        renderNoPhone();
     }
 
     if (!liveBleMode && now - lastSwitch >= DemoScreenMs) {

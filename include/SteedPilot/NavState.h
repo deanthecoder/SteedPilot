@@ -18,6 +18,7 @@ enum class DisplayMode {
     Navigation,
     Destination,
     RideInfo,
+    NoPhone,
     Calibration
 };
 

@@ -320,6 +320,9 @@ void App::render(Display& display) {
         case DisplayMode::RideInfo:
             renderRideInfo(display);
             break;
+        case DisplayMode::NoPhone:
+            renderNoPhone(display);
+            break;
         case DisplayMode::Calibration:
             renderCalibration(display);
             break;
@@ -380,6 +383,15 @@ void App::renderRideInfo(Display& display) {
 
     display.text(centerX(display), centerY(display) - 36, "RIDE", 4, Palette::White, TextAlign::Center);
     drawDistance(display, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::Amber);
+}
+
+void App::renderNoPhone(Display& display) {
+    drawCircularShell(display);
+
+    const int cx = centerX(display);
+    const int cy = centerY(display);
+    display.text(cx, cy - 20, "NO PHONE", 2, Palette::White, TextAlign::Center);
+    display.text(cx, cy + 18, "WAITING", 2, Palette::Muted, TextAlign::Center);
 }
 
 void App::renderCalibration(Display& display) {

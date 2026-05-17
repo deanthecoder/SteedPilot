@@ -118,6 +118,10 @@ DisplayMode parseMode(const char* value) {
         return DisplayMode::RideInfo;
     }
 
+    if (stringEquals(value, "noPhone")) {
+        return DisplayMode::NoPhone;
+    }
+
     if (stringEquals(value, "calibration")) {
         return DisplayMode::Calibration;
     }

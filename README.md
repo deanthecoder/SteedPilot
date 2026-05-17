@@ -118,6 +118,7 @@ Export a single fixture to PNG:
 ![Navigation roundabout](img/navigation-roundabout.png)
 ![Navigation speed warning](img/navigation-speed-warning.png)
 ![Destination heading](img/destination-heading.png)
+![Disconnected](img/disconnected.png)
 ![Startup DTC logo](img/startup-dtc.png)
 
 ## Font Assets

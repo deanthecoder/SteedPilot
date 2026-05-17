@@ -80,6 +80,13 @@ private:
     void renderRideInfo(Display& display);
 
     /**
+     * Renders the no-phone connection warning screen.
+     *
+     * @param display Rendering target.
+     */
+    void renderNoPhone(Display& display);
+
+    /**
      * Renders the display calibration screen used during hardware bring-up.
      *
      * @param display Rendering target.
