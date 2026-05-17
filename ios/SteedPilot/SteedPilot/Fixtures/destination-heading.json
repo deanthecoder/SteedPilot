@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "state",
+  "mode": "destination",
+  "link": "connected",
+  "distanceToDestinationMeters": 18400,
+  "destinationBearingDegrees": 35,
+  "tripProgressComplete": 32
+}

@@ -12,6 +12,8 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var sender = BluetoothNavSender()
+    private let fixtures = NavFixtures.loadFixtures()
+    private let replayRoute = NavFixtures.loadReplayRoute()
 
     var body: some View {
         NavigationStack {
@@ -36,8 +38,29 @@ struct ContentView: View {
                     }
                 }
 
+                if let replayRoute {
+                    Section("Replay") {
+                        Button(sender.isReplaying ? "Stop Replay" : "Replay Demo Route") {
+                            if sender.isReplaying {
+                                sender.cancelReplay()
+                            } else {
+                                sender.replay(replayRoute)
+                            }
+                        }
+
+                        if sender.isReplaying {
+                            HStack {
+                                Text("Progress")
+                                Spacer()
+                                Text(sender.replayProgress)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+
                 Section("Fixtures") {
-                    ForEach(NavFixtures.all) { fixture in
+                    ForEach(fixtures) { fixture in
                         Button(fixture.title) {
                             sender.send(fixture.data)
                         }

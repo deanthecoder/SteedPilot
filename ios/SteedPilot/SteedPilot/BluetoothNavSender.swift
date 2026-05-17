@@ -14,15 +14,20 @@ import Foundation
 
 final class BluetoothNavSender: NSObject, ObservableObject {
     @Published private(set) var status = "Idle"
+    @Published private(set) var isReplaying = false
+    @Published private(set) var replayProgress = ""
 
     private let serviceUuid = CBUUID(string: "c6372234-79d6-4a5e-8a57-08a3b7a8a7d1")
     private let stateCharacteristicUuid = CBUUID(string: "f6c8d747-fc2c-4ef4-906a-7c8cbf552814")
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var characteristic: CBCharacteristic?
-    private var pendingPayload: Data?
+    private var pendingPayloads: [Data] = []
     private var packet = Data()
     private var offset = 0
+    private var isWriting = false
+    private var heartbeatTimer: Timer?
+    private var replayWorkItems: [DispatchWorkItem] = []
 
     override init() {
         super.init()
@@ -35,10 +40,10 @@ final class BluetoothNavSender: NSObject, ObservableObject {
      * - Parameter payload: JSON payload bytes.
      */
     func send(_ payload: Data) {
-        pendingPayload = payload
+        pendingPayloads.append(payload)
 
         if let peripheral, let characteristic, peripheral.state == .connected {
-            send(payload, to: characteristic)
+            sendNextPayload(to: characteristic)
             return
         }
 
@@ -52,17 +57,66 @@ final class BluetoothNavSender: NSObject, ObservableObject {
     }
 
     /**
-     * Sends the supplied payload to the discovered characteristic.
+     * Starts a timed route replay.
      *
-     * - Parameters:
-     *   - payload: JSON payload bytes.
-     *   - characteristic: Writable SteedPilot BLE characteristic.
+     * - Parameter route: Replay route containing timed packet steps.
      */
-    private func send(_ payload: Data, to characteristic: CBCharacteristic) {
+    func replay(_ route: ReplayRoute) {
+        cancelReplay()
+        isReplaying = true
+
+        var delayMs = 0
+        for (index, step) in route.steps.enumerated() {
+            let item = DispatchWorkItem { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                if let payload = NavFixtures.payload(for: step) {
+                    replayProgress = "\(index + 1) / \(route.steps.count)"
+                    send(payload)
+                }
+
+                if index + 1 == route.steps.count {
+                    isReplaying = false
+                }
+            }
+
+            replayWorkItems.append(item)
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs), execute: item)
+            delayMs += step.delayMs
+        }
+    }
+
+    /**
+     * Cancels any queued replay steps.
+     */
+    func cancelReplay() {
+        for item in replayWorkItems {
+            item.cancel()
+        }
+
+        replayWorkItems.removeAll()
+        isReplaying = false
+        replayProgress = ""
+    }
+
+    /**
+     * Sends the next queued payload to the discovered characteristic.
+     *
+     * - Parameter characteristic: Writable SteedPilot BLE characteristic.
+     */
+    private func sendNextPayload(to characteristic: CBCharacteristic) {
+        guard !isWriting, !pendingPayloads.isEmpty else {
+            return
+        }
+
+        let payload = pendingPayloads.removeFirst()
         packet = payload
         packet.append(0x0A)
         offset = 0
         self.characteristic = characteristic
+        isWriting = true
         status = "Sending"
         writeNextChunk()
     }
@@ -78,7 +132,8 @@ final class BluetoothNavSender: NSObject, ObservableObject {
 
         if offset >= packet.count {
             status = "Sent"
-            pendingPayload = nil
+            isWriting = false
+            sendNextPayload(to: characteristic)
             return
         }
 
@@ -86,6 +141,24 @@ final class BluetoothNavSender: NSObject, ObservableObject {
         let end = min(offset + chunkSize, packet.count)
         peripheral.writeValue(packet.subdata(in: offset..<end), for: characteristic, type: .withResponse)
         offset = end
+    }
+
+    /**
+     * Starts periodic heartbeat packets while the peripheral remains connected.
+     */
+    private func startHeartbeatTimer() {
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
+            self?.send(NavFixtures.heartbeat)
+        }
+    }
+
+    /**
+     * Stops periodic heartbeat packets.
+     */
+    private func stopHeartbeatTimer() {
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
     }
 }
 
@@ -110,6 +183,7 @@ extension BluetoothNavSender: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         status = "Disconnected"
         characteristic = nil
+        stopHeartbeatTimer()
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -144,8 +218,9 @@ extension BluetoothNavSender: CBPeripheralDelegate {
         }
 
         self.characteristic = characteristic
-        if let pendingPayload {
-            send(pendingPayload, to: characteristic)
+        startHeartbeatTimer()
+        if !pendingPayloads.isEmpty {
+            sendNextPayload(to: characteristic)
         } else {
             status = "Connected"
         }
