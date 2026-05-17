@@ -18,6 +18,17 @@ struct ContentView: View {
             List {
                 Section("Connection") {
                     HStack {
+                        Spacer()
+                        Image("DTC")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 132, height: 78)
+                            .accessibilityLabel("Dean The Coder")
+                        Spacer()
+                    }
+                    .listRowBackground(Color.black)
+
+                    HStack {
                         Text("Status")
                         Spacer()
                         Text(sender.status)
