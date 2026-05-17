@@ -169,6 +169,8 @@ The ESP32 firmware and desktop simulator should share as much rendering and stat
 ## BLE Fixture Loop
 The first live-device development loop uses JSON fixtures as the protocol source of truth.
 
+Protocol details are documented in [docs/protocol.md](docs/protocol.md).
+
 The firmware advertises a `SteedPilot` BLE peripheral with one writable navigation-state characteristic. A Mac can send any fixture directly to the ESP32:
 
 ```sh
