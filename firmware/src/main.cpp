@@ -33,6 +33,7 @@ bool noPhoneVisible = false;
 volatile bool pendingBleState = false;
 uint32_t lastPacketMs = 0;
 bool haveBleState = false;
+SteedPilot::NavState lastBleState;
 SteedPilot::NavPacket nextBlePacket;
 
 uint8_t splashOpacity(uint32_t elapsedMs) {
@@ -142,7 +143,6 @@ void applyUpdate(SteedPilot::NavState& state, const SteedPilot::NavPacket& packe
 
 void applyBlePacket(const SteedPilot::NavPacket& packet) {
     liveBleMode = true;
-    noPhoneVisible = false;
     lastPacketMs = millis();
     nextBlePacket = packet;
     pendingBleState = true;
@@ -195,16 +195,26 @@ void loop() {
         pendingBleState = false;
         if (nextBlePacket.type == SteedPilot::NavPacketType::Heartbeat) {
             Serial.println("BLE heartbeat received");
+            if (haveBleState && noPhoneVisible) {
+                lastBleState.connected = nextBlePacket.state.connected;
+                lastBleState.linkState = nextBlePacket.state.linkState;
+                app.setState(lastBleState);
+                app.render(display);
+                noPhoneVisible = false;
+                Serial.println("BLE heartbeat restored last state");
+            }
         } else if (nextBlePacket.type == SteedPilot::NavPacketType::State) {
             haveBleState = true;
-            app.setState(nextBlePacket.state);
+            lastBleState = nextBlePacket.state;
+            app.setState(lastBleState);
             app.render(display);
             noPhoneVisible = false;
             Serial.printf("BLE state rendered: mode=%d maneuver=%d distance=%ld\n", (int)nextBlePacket.state.mode, (int)nextBlePacket.state.maneuver, (long)nextBlePacket.state.distanceToManeuverMeters);
         } else if (haveBleState) {
-            SteedPilot::NavState state = app.state();
+            SteedPilot::NavState state = lastBleState;
             applyUpdate(state, nextBlePacket);
-            app.setState(state);
+            lastBleState = state;
+            app.setState(lastBleState);
             app.render(display);
             noPhoneVisible = false;
             Serial.printf("BLE update rendered: fields=%lu distance=%ld\n", (unsigned long)nextBlePacket.fields, (long)state.distanceToManeuverMeters);
