@@ -111,6 +111,12 @@ Export a single fixture to PNG:
 ./sim/build/steedpilot-sim --export-fixture fixtures/navigation-roundabout.json --output /tmp/roundabout.png
 ```
 
+Replay a short BLE route sequence to the device:
+
+```sh
+tools/steedpilot_send --replay fixtures/route-demo.json
+```
+
 ![Navigation ahead](img/navigation-ahead.png)
 ![Navigation left](img/navigation-left.png)
 ![Navigation bend left](img/navigation-bend-left.png)

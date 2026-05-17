@@ -1,0 +1,20 @@
+{
+  "steps": [
+    { "packet": "fixtures/navigation-roundabout.json", "delayMs": 1000 },
+    {
+      "json": "{ \"v\": 1, \"type\": \"update\", \"distanceToManeuverMeters\": 180, \"distanceToDestinationMeters\": 18320, \"maneuverProgressRemaining\": 42, \"tripProgressComplete\": 45 }",
+      "delayMs": 1000
+    },
+    {
+      "json": "{ \"v\": 1, \"type\": \"update\", \"distanceToManeuverMeters\": 90, \"distanceToDestinationMeters\": 18240, \"maneuverProgressRemaining\": 24, \"tripProgressComplete\": 46 }",
+      "delayMs": 1000
+    },
+    { "packet": "fixtures/heartbeat.json", "delayMs": 1000 },
+    { "packet": "fixtures/navigation-left.json", "delayMs": 1000 },
+    {
+      "json": "{ \"v\": 1, \"type\": \"update\", \"distanceToManeuverMeters\": 80, \"distanceToDestinationMeters\": 18120, \"maneuverProgressRemaining\": 18, \"tripProgressComplete\": 47 }",
+      "delayMs": 1000
+    },
+    { "packet": "fixtures/destination-heading.json", "delayMs": 1000 }
+  ]
+}

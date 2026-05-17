@@ -15,16 +15,22 @@ import Foundation
 private let serviceUuid = CBUUID(string: "c6372234-79d6-4a5e-8a57-08a3b7a8a7d1")
 private let stateCharacteristicUuid = CBUUID(string: "f6c8d747-fc2c-4ef4-906a-7c8cbf552814")
 
+private struct Payload {
+    let data: Data
+    let delayMs: Int
+}
+
 private final class Sender: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
-    private let payload: Data
+    private let payloads: [Payload]
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var characteristic: CBCharacteristic?
     private var packet = Data()
     private var offset = 0
+    private var payloadIndex = 0
 
-    init(payload: Data) {
-        self.payload = payload
+    init(payloads: [Payload]) {
+        self.payloads = payloads
         super.init()
         central = CBCentralManager(delegate: self, queue: nil)
     }
@@ -108,7 +114,22 @@ private final class Sender: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         }
 
         self.characteristic = characteristic
-        packet = payload
+        sendCurrentPayload()
+    }
+
+    /**
+     * Starts sending the currently selected payload.
+     */
+    private func sendCurrentPayload() {
+        guard payloadIndex < payloads.count else {
+            if let peripheral {
+                central.cancelPeripheralConnection(peripheral)
+            }
+
+            exit(0)
+        }
+
+        packet = payloads[payloadIndex].data
         packet.append(0x0A)
         offset = 0
         writeNextChunk()
@@ -124,10 +145,18 @@ private final class Sender: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         }
 
         if offset >= packet.count {
-            print("Sent \(payload.count) bytes.")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.central.cancelPeripheralConnection(peripheral)
-                exit(0)
+            print("Sent packet \(payloadIndex + 1) of \(payloads.count).")
+            payloadIndex += 1
+            if payloadIndex >= payloads.count {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.central.cancelPeripheralConnection(peripheral)
+                    exit(0)
+                }
+            } else {
+                let delay = Double(self.payloads[self.payloadIndex].delayMs) / 1000.0
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    self.sendCurrentPayload()
+                }
             }
             return
         }
@@ -151,13 +180,46 @@ private final class Sender: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 }
 
-guard CommandLine.arguments.count == 2 else {
+struct ReplayStep: Decodable {
+    let delayMs: Int?
+    let packet: String?
+    let json: String?
+}
+
+struct ReplayFile: Decodable {
+    let steps: [ReplayStep]
+}
+
+private func loadPayload(_ path: String, delayMs: Int = 1000) throws -> Payload {
+    Payload(data: try Data(contentsOf: URL(fileURLWithPath: path)), delayMs: delayMs)
+}
+
+private func loadReplay(_ path: String) throws -> [Payload] {
+    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    let replay = try JSONDecoder().decode(ReplayFile.self, from: data)
+    var payloads: [Payload] = []
+
+    for step in replay.steps {
+        let delayMs = step.delayMs ?? 1000
+        if let packet = step.packet {
+            payloads.append(try loadPayload(packet, delayMs: delayMs))
+        } else if let json = step.json {
+            payloads.append(Payload(data: Data(json.utf8), delayMs: delayMs))
+        }
+    }
+
+    return payloads
+}
+
+guard CommandLine.arguments.count == 2 || (CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--replay") else {
     print("Usage: tools/steedpilot_send.swift fixtures/navigation-roundabout.json")
+    print("       tools/steedpilot_send.swift --replay fixtures/route-demo.json")
     exit(1)
 }
 
-let fixtureUrl = URL(fileURLWithPath: CommandLine.arguments[1])
-let payload = try Data(contentsOf: fixtureUrl)
-private let sender = Sender(payload: payload)
+private let payloads = try CommandLine.arguments[1] == "--replay"
+    ? loadReplay(CommandLine.arguments[2])
+    : [loadPayload(CommandLine.arguments[1])]
+private let sender = Sender(payloads: payloads)
 _ = sender
 RunLoop.main.run()
