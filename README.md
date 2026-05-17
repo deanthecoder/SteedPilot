@@ -80,6 +80,8 @@ Navigation maneuvers should support more nuance than simple left/right turns. Pl
 
 Route progress can be shown with edge arcs inside the speed warning ring. The trip arc grows toward 100% as the route is completed, while the next-maneuver arc shrinks from 100% to 0% as the upcoming instruction approaches. Long stretches without a near maneuver may use a "stay on this road" style state rather than presenting an unhelpfully distant turn.
 
+When the destination is reached, the device should switch to a ride-summary screen rather than staying in turn-by-turn mode. A small pair of chequered flags would be a good visual cue for arrival.
+
 ## UI Direction
 The interface should favour:
 
@@ -204,7 +206,15 @@ Packets can be sent as full state, partial update, or heartbeat messages:
 { "v": 1, "type": "heartbeat" }
 ```
 
-`state` replaces the device navigation state, `update` patches only the fields present, and `heartbeat` refreshes the no-phone timeout without changing the visible screen.
+`state` replaces the device navigation state, `update` patches only the fields present, and `heartbeat` refreshes the no-phone timeout. Before a route is active, heartbeat tells the device the app is alive so it can move from `LAUNCH APP` to `SET ROUTE`.
+
+The current live-device lifecycle is:
+
+- Device boot: `LAUNCH APP`.
+- App connected with no route: `SET ROUTE`.
+- Route state received: render navigation.
+- Phone lost after route state: `NO PHONE`.
+- Heartbeat returns after route state: restore the last navigation screen.
 
 Roundabout fixtures can include relative exit angles so the device can draw exits closer to real life:
 

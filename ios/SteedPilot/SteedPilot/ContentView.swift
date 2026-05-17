@@ -12,6 +12,8 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var sender = BluetoothNavSender()
+    @State private var destination = "Ace Cafe"
+    @State private var routeActive = false
     private let fixtures = NavFixtures.loadFixtures()
     private let replayRoute = NavFixtures.loadReplayRoute()
 
@@ -35,6 +37,27 @@ struct ContentView: View {
                         Spacer()
                         Text(sender.status)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Route") {
+                    TextField("Destination", text: $destination)
+                        .textInputAutocapitalization(.words)
+                        .disableAutocorrection(true)
+
+                    Button(routeActive ? "Route Active" : "Start Route") {
+                        if let payload = NavFixtures.loadStubRouteStart() {
+                            sender.send(payload)
+                            routeActive = true
+                        }
+                    }
+                    .disabled(routeActive || destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    if routeActive {
+                        Button("End Route", role: .destructive) {
+                            sender.send(NavFixtures.clearRoute)
+                            routeActive = false
+                        }
                     }
                 }
 

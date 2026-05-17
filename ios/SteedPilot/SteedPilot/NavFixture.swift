@@ -36,6 +36,16 @@ struct ReplayRoute: Decodable {
 
 enum NavFixtures {
     static let heartbeat = Data(#"{ "v": 1, "type": "heartbeat" }"#.utf8)
+    static let clearRoute = Data(#"{ "v": 1, "type": "state", "mode": "noPhone", "link": "connected" }"#.utf8)
+
+    /**
+     * Loads the first navigation state used by the route-entry stub.
+     *
+     * - Returns: Navigation state bytes, or nil when unavailable.
+     */
+    static func loadStubRouteStart() -> Data? {
+        loadData(filename: "navigation-ahead.json")
+    }
 
     /**
      * Loads the fixture buttons from bundled JSON resources.

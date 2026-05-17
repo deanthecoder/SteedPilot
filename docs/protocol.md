@@ -41,7 +41,9 @@ The ESP32 advertises as `SteedPilot` and exposes one writable navigation-state c
 
 ### Heartbeat
 
-`heartbeat` refreshes the no-phone timeout without changing the visible screen.
+`heartbeat` refreshes the no-phone timeout without changing an active navigation screen.
+
+Before the device has received a route state, a heartbeat means the app is alive but no route is active. The device should move from `LAUNCH APP` to `SET ROUTE`.
 
 ```json
 {
@@ -49,6 +51,52 @@ The ESP32 advertises as `SteedPilot` and exposes one writable navigation-state c
   "type": "heartbeat"
 }
 ```
+
+## Route Lifecycle
+
+The phone owns route planning and decides which lifecycle state the display should show.
+
+Initial device startup:
+
+- The device shows `LAUNCH APP` until it receives any packet from the phone.
+- A heartbeat before any route state means the phone app is connected, but no route is active.
+- The device then shows `SET ROUTE`.
+
+Route selected:
+
+- The phone sends a `state` packet with `mode: "navigation"` and the first useful instruction.
+- The device renders that state immediately.
+- The phone keeps sending `update` packets while the rider moves.
+
+Route paused or app still open with no route:
+
+- The phone sends heartbeat packets only.
+- The device stays on `SET ROUTE` if no route has ever been received.
+
+Phone lost after a route:
+
+- If no packet is received for 10 seconds after route data has started, the device shows `NO PHONE`.
+- A later heartbeat restores the last route state.
+
+Arrived:
+
+- The phone sends a `state` packet using `maneuver: "arrive"`.
+- The device can show the arrival state until the phone clears or replaces it.
+
+Future lifecycle packets may add an explicit route status field, for example:
+
+```json
+{
+  "v": 1,
+  "type": "state",
+  "route": {
+    "status": "planning",
+    "destinationName": "Ace Cafe"
+  }
+}
+```
+
+The current firmware does not require this object yet; for now the route lifecycle is inferred from packet timing plus navigation state.
 
 ## Modes
 
