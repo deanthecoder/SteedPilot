@@ -390,7 +390,14 @@ void App::renderNoPhone(Display& display) {
 
     const int cx = centerX(display);
     const int cy = centerY(display);
-    display.text(cx, cy - 20, "NO PHONE", 2, Palette::White, TextAlign::Center);
+    const char* title = "NO PHONE";
+    if (_state.linkState == LinkState::Pairing) {
+        title = "LAUNCH APP";
+    } else if (_state.linkState == LinkState::Connected) {
+        title = "SET ROUTE";
+    }
+
+    display.text(cx, cy - 20, title, 2, Palette::White, TextAlign::Center);
     display.text(cx, cy + 18, "WAITING", 2, Palette::Muted, TextAlign::Center);
 }
 

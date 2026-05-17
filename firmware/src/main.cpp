@@ -21,9 +21,7 @@ constexpr uint32_t SplashFadeInMs = 900;
 constexpr uint32_t SplashHoldMs = 2000;
 constexpr uint32_t SplashFadeOutMs = 900;
 constexpr uint32_t SplashTotalMs = SplashFadeInMs + SplashHoldMs + SplashFadeOutMs;
-constexpr uint32_t DemoScreenMs = 3500;
 constexpr uint32_t NoPhoneTimeoutMs = 10000;
-constexpr int DemoScreenCount = 7;
 
 FirmwareDisplay display;
 FirmwareBle ble;
@@ -160,6 +158,28 @@ void renderNoPhone() {
     Serial.println("No-phone screen rendered");
 }
 
+void renderWaitingForApp() {
+    SteedPilot::NavState state;
+    state.mode = SteedPilot::DisplayMode::NoPhone;
+    state.connected = false;
+    state.linkState = SteedPilot::LinkState::Pairing;
+    app.setState(state);
+    app.render(display);
+    noPhoneVisible = true;
+    Serial.println("Waiting-for-app screen rendered");
+}
+
+void renderWaitingForRoute() {
+    SteedPilot::NavState state;
+    state.mode = SteedPilot::DisplayMode::NoPhone;
+    state.connected = true;
+    state.linkState = SteedPilot::LinkState::Connected;
+    app.setState(state);
+    app.render(display);
+    noPhoneVisible = true;
+    Serial.println("Waiting-for-route screen rendered");
+}
+
 } // namespace
 
 void setup() {
@@ -178,14 +198,11 @@ void setup() {
     }
 
     ble.begin(applyBlePacket);
-    renderDemoScreen(0);
-    Serial.println("Demo screen drawn");
+    renderWaitingForApp();
 }
 
 void loop() {
-    static uint32_t lastSwitch = millis();
     static uint32_t lastTick = millis();
-    static int screen = 0;
     const uint32_t now = millis();
 
     app.tick(now - lastTick);
@@ -202,6 +219,8 @@ void loop() {
                 app.render(display);
                 noPhoneVisible = false;
                 Serial.println("BLE heartbeat restored last state");
+            } else if (!haveBleState) {
+                renderWaitingForRoute();
             }
         } else if (nextBlePacket.type == SteedPilot::NavPacketType::State) {
             haveBleState = true;
@@ -225,12 +244,6 @@ void loop() {
 
     if (liveBleMode && !pendingBleState && !noPhoneVisible && now - lastPacketMs >= NoPhoneTimeoutMs) {
         renderNoPhone();
-    }
-
-    if (!liveBleMode && now - lastSwitch >= DemoScreenMs) {
-        screen = (screen + 1) % DemoScreenCount;
-        renderDemoScreen(screen);
-        lastSwitch = now;
     }
 
     delay(16);
