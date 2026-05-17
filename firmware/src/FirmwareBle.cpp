@@ -93,7 +93,7 @@ SteedPilotBleCharacteristicCallbacks characteristicCallbacks;
 
 } // namespace
 
-void FirmwareBle::begin(StateCallback callback) {
+void FirmwareBle::begin(PacketCallback callback) {
     _callback = callback;
     owner = this;
 
@@ -159,17 +159,18 @@ void FirmwareBle::parseBufferedPacket() {
     _packet[_packetLength] = '\0';
     Serial.printf("BLE JSON packet: %u bytes, prefix: %.24s\n", (unsigned)_packetLength, _packet);
 
-    SteedPilot::NavState state;
-    if (!SteedPilot::parseNavStateJson(_packet, _packetLength, state)) {
+    SteedPilot::NavPacket packet;
+    if (!SteedPilot::parseNavPacketJson(_packet, _packetLength, packet)) {
         Serial.println("BLE JSON parse failed");
         return;
     }
 
-    state.linkState = _linkState;
-    state.connected = _linkState == SteedPilot::LinkState::Connected;
+    packet.state.linkState = _linkState;
+    packet.state.connected = _linkState == SteedPilot::LinkState::Connected;
+    packet.fields |= SteedPilot::NavFieldLink;
 
     if (_callback) {
-        _callback(state);
+        _callback(packet);
     }
 }
 

@@ -32,7 +32,8 @@ bool liveBleMode = false;
 bool noPhoneVisible = false;
 volatile bool pendingBleState = false;
 uint32_t lastPacketMs = 0;
-SteedPilot::NavState nextBleState;
+bool haveBleState = false;
+SteedPilot::NavPacket nextBlePacket;
 
 uint8_t splashOpacity(uint32_t elapsedMs) {
     if (elapsedMs < SplashFadeInMs) {
@@ -114,13 +115,38 @@ void renderDemoScreen(int screen) {
     app.render(display);
 }
 
-void applyBleState(const SteedPilot::NavState& state) {
+void applyUpdate(SteedPilot::NavState& state, const SteedPilot::NavPacket& packet) {
+    if (packet.fields & SteedPilot::NavFieldMode) state.mode = packet.state.mode;
+    if (packet.fields & SteedPilot::NavFieldManeuver) state.maneuver = packet.state.maneuver;
+    if (packet.fields & SteedPilot::NavFieldLink) {
+        state.connected = packet.state.connected;
+        state.linkState = packet.state.linkState;
+    }
+    if (packet.fields & SteedPilot::NavFieldDistanceToManeuver) state.distanceToManeuverMeters = packet.state.distanceToManeuverMeters;
+    if (packet.fields & SteedPilot::NavFieldDistanceToDestination) state.distanceToDestinationMeters = packet.state.distanceToDestinationMeters;
+    if (packet.fields & SteedPilot::NavFieldManeuverProgress) state.maneuverProgressRemaining = packet.state.maneuverProgressRemaining;
+    if (packet.fields & SteedPilot::NavFieldTripProgress) state.tripProgressComplete = packet.state.tripProgressComplete;
+    if (packet.fields & SteedPilot::NavFieldDestinationBearing) state.destinationBearingDegrees = packet.state.destinationBearingDegrees;
+    if (packet.fields & SteedPilot::NavFieldRoundabout) {
+        state.roundaboutExitCount = packet.state.roundaboutExitCount;
+        state.roundaboutExit = packet.state.roundaboutExit;
+        state.roundaboutExitAngleCount = packet.state.roundaboutExitAngleCount;
+        for (int i = 0; i < SteedPilot::MaxRoundaboutExits; ++i) {
+            state.roundaboutExitAngles[i] = packet.state.roundaboutExitAngles[i];
+        }
+    }
+    if (packet.fields & SteedPilot::NavFieldCurrentSpeed) state.currentSpeed = packet.state.currentSpeed;
+    if (packet.fields & SteedPilot::NavFieldSpeedLimit) state.speedLimit = packet.state.speedLimit;
+    if (packet.fields & SteedPilot::NavFieldSpeedUnit) state.speedUnit = packet.state.speedUnit;
+}
+
+void applyBlePacket(const SteedPilot::NavPacket& packet) {
     liveBleMode = true;
     noPhoneVisible = false;
     lastPacketMs = millis();
-    nextBleState = state;
+    nextBlePacket = packet;
     pendingBleState = true;
-    Serial.printf("BLE state queued: mode=%d maneuver=%d distance=%ld\n", (int)state.mode, (int)state.maneuver, (long)state.distanceToManeuverMeters);
+    Serial.printf("BLE packet queued: type=%d fields=%lu\n", (int)packet.type, (unsigned long)packet.fields);
 }
 
 void renderNoPhone() {
@@ -151,7 +177,7 @@ void setup() {
         delay(16);
     }
 
-    ble.begin(applyBleState);
+    ble.begin(applyBlePacket);
     renderDemoScreen(0);
     Serial.println("Demo screen drawn");
 }
@@ -167,10 +193,24 @@ void loop() {
 
     if (pendingBleState) {
         pendingBleState = false;
-        app.setState(nextBleState);
-        app.render(display);
-        noPhoneVisible = false;
-        Serial.printf("BLE state rendered: mode=%d maneuver=%d distance=%ld\n", (int)nextBleState.mode, (int)nextBleState.maneuver, (long)nextBleState.distanceToManeuverMeters);
+        if (nextBlePacket.type == SteedPilot::NavPacketType::Heartbeat) {
+            Serial.println("BLE heartbeat received");
+        } else if (nextBlePacket.type == SteedPilot::NavPacketType::State) {
+            haveBleState = true;
+            app.setState(nextBlePacket.state);
+            app.render(display);
+            noPhoneVisible = false;
+            Serial.printf("BLE state rendered: mode=%d maneuver=%d distance=%ld\n", (int)nextBlePacket.state.mode, (int)nextBlePacket.state.maneuver, (long)nextBlePacket.state.distanceToManeuverMeters);
+        } else if (haveBleState) {
+            SteedPilot::NavState state = app.state();
+            applyUpdate(state, nextBlePacket);
+            app.setState(state);
+            app.render(display);
+            noPhoneVisible = false;
+            Serial.printf("BLE update rendered: fields=%lu distance=%ld\n", (unsigned long)nextBlePacket.fields, (long)state.distanceToManeuverMeters);
+        } else {
+            Serial.println("BLE update ignored before full state");
+        }
     }
 
     if (liveBleMode && !pendingBleState && !noPhoneVisible && now - lastPacketMs >= NoPhoneTimeoutMs) {

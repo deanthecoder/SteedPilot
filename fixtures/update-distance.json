@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "update",
+  "distanceToManeuverMeters": 120,
+  "distanceToDestinationMeters": 18240,
+  "maneuverProgressRemaining": 32,
+  "tripProgressComplete": 45,
+  "speed": {
+    "current": 47
+  }
+}

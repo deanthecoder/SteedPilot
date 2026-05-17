@@ -10,7 +10,7 @@
 
 #pragma once
 
-#include "SteedPilot/NavState.h"
+#include "SteedPilot/NavJson.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -23,14 +23,14 @@ public:
     /**
      * Callback invoked when a complete navigation packet is received.
      */
-    using StateCallback = void (*)(const SteedPilot::NavState& state);
+    using PacketCallback = void (*)(const SteedPilot::NavPacket& packet);
 
     /**
      * Starts BLE advertising and exposes the writable navigation-state characteristic.
      *
      * @param callback Function invoked after a valid JSON packet is parsed.
      */
-    void begin(StateCallback callback);
+    void begin(PacketCallback callback);
 
     /**
      * Gets the current link state inferred from BLE server activity.
@@ -57,7 +57,7 @@ public:
 private:
     static constexpr size_t MaxPacketBytes = 1024;
 
-    StateCallback _callback = nullptr;
+    PacketCallback _callback = nullptr;
     SteedPilot::LinkState _linkState = SteedPilot::LinkState::Disconnected;
     char _packet[MaxPacketBytes] = {};
     size_t _packetLength = 0;

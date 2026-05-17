@@ -163,10 +163,22 @@ SpeedUnit parseSpeedUnit(const char* value) {
     return SpeedUnit::Mph;
 }
 
-void readRoundaboutAngles(const char* json, NavState& state) {
+NavPacketType parsePacketType(const char* value) {
+    if (stringEquals(value, "update")) {
+        return NavPacketType::Update;
+    }
+
+    if (stringEquals(value, "heartbeat")) {
+        return NavPacketType::Heartbeat;
+    }
+
+    return NavPacketType::State;
+}
+
+bool readRoundaboutAngles(const char* json, NavState& state) {
     const char* exits = findKey(json, "exits");
     if (!exits) {
-        return;
+        return false;
     }
 
     state.roundaboutExitAngleCount = 0;
@@ -196,59 +208,91 @@ void readRoundaboutAngles(const char* json, NavState& state) {
     if (state.roundaboutExitCount <= 0) {
         state.roundaboutExitCount = state.roundaboutExitAngleCount;
     }
+
+    return state.roundaboutExitAngleCount > 0;
 }
 
 } // namespace
 
-bool parseNavStateJson(const char* json, NavState& state) {
+bool parseNavPacketJson(const char* json, NavPacket& packet) {
     if (!json) {
         return false;
     }
 
+    packet = {};
     char text[32];
     int value = 0;
     bool boolValue = false;
-    bool anyField = false;
+
+    if (readString(json, "type", text, sizeof(text))) {
+        packet.type = parsePacketType(text);
+    }
+
+    if (packet.type == NavPacketType::Heartbeat) {
+        return true;
+    }
 
     if (readString(json, "mode", text, sizeof(text))) {
-        state.mode = parseMode(text);
-        anyField = true;
+        packet.state.mode = parseMode(text);
+        packet.fields |= NavFieldMode;
     }
 
     if (readString(json, "maneuver", text, sizeof(text))) {
-        state.maneuver = parseManeuver(text);
-        anyField = true;
+        packet.state.maneuver = parseManeuver(text);
+        packet.fields |= NavFieldManeuver;
     }
 
     if (readString(json, "link", text, sizeof(text))) {
-        state.linkState = parseLinkState(text);
-        state.connected = state.linkState == LinkState::Connected;
-        anyField = true;
+        packet.state.linkState = parseLinkState(text);
+        packet.state.connected = packet.state.linkState == LinkState::Connected;
+        packet.fields |= NavFieldLink;
     }
 
     if (readBool(json, "connected", boolValue)) {
-        state.connected = boolValue;
-        state.linkState = boolValue ? LinkState::Connected : LinkState::Disconnected;
-        anyField = true;
+        packet.state.connected = boolValue;
+        packet.state.linkState = boolValue ? LinkState::Connected : LinkState::Disconnected;
+        packet.fields |= NavFieldLink;
     }
 
-    if (readInt(json, "distanceToManeuverMeters", value)) { state.distanceToManeuverMeters = value; anyField = true; }
-    if (readInt(json, "distanceToDestinationMeters", value)) { state.distanceToDestinationMeters = value; anyField = true; }
-    if (readInt(json, "maneuverProgressRemaining", value)) { state.maneuverProgressRemaining = (int8_t)value; anyField = true; }
-    if (readInt(json, "tripProgressComplete", value)) { state.tripProgressComplete = (int8_t)value; anyField = true; }
-    if (readInt(json, "destinationBearingDegrees", value)) { state.destinationBearingDegrees = (int16_t)value; anyField = true; }
-    if (readInt(json, "exit", value)) { state.roundaboutExit = (int8_t)value; anyField = true; }
-    if (readInt(json, "exitCount", value)) { state.roundaboutExitCount = (int8_t)value; anyField = true; }
-    if (readInt(json, "current", value)) { state.currentSpeed = (int16_t)value; anyField = true; }
-    if (readInt(json, "limit", value)) { state.speedLimit = (int16_t)value; anyField = true; }
+    if (readInt(json, "distanceToManeuverMeters", value)) { packet.state.distanceToManeuverMeters = value; packet.fields |= NavFieldDistanceToManeuver; }
+    if (readInt(json, "distanceToDestinationMeters", value)) { packet.state.distanceToDestinationMeters = value; packet.fields |= NavFieldDistanceToDestination; }
+    if (readInt(json, "maneuverProgressRemaining", value)) { packet.state.maneuverProgressRemaining = (int8_t)value; packet.fields |= NavFieldManeuverProgress; }
+    if (readInt(json, "tripProgressComplete", value)) { packet.state.tripProgressComplete = (int8_t)value; packet.fields |= NavFieldTripProgress; }
+    if (readInt(json, "destinationBearingDegrees", value)) { packet.state.destinationBearingDegrees = (int16_t)value; packet.fields |= NavFieldDestinationBearing; }
+    if (readInt(json, "exit", value)) { packet.state.roundaboutExit = (int8_t)value; packet.fields |= NavFieldRoundabout; }
+    if (readInt(json, "exitCount", value)) { packet.state.roundaboutExitCount = (int8_t)value; packet.fields |= NavFieldRoundabout; }
+    if (readInt(json, "current", value)) { packet.state.currentSpeed = (int16_t)value; packet.fields |= NavFieldCurrentSpeed; }
+    if (readInt(json, "limit", value)) { packet.state.speedLimit = (int16_t)value; packet.fields |= NavFieldSpeedLimit; }
 
     if (readString(json, "unit", text, sizeof(text))) {
-        state.speedUnit = parseSpeedUnit(text);
-        anyField = true;
+        packet.state.speedUnit = parseSpeedUnit(text);
+        packet.fields |= NavFieldSpeedUnit;
     }
 
-    readRoundaboutAngles(json, state);
-    return anyField;
+    if (readRoundaboutAngles(json, packet.state)) {
+        packet.fields |= NavFieldRoundabout;
+    }
+
+    return packet.fields != NavFieldNone;
+}
+
+bool parseNavPacketJson(const char* json, size_t length, NavPacket& packet) {
+    if (!json) {
+        return false;
+    }
+
+    std::string copy(json, length);
+    return parseNavPacketJson(copy.c_str(), packet);
+}
+
+bool parseNavStateJson(const char* json, NavState& state) {
+    NavPacket packet;
+    if (!parseNavPacketJson(json, packet) || packet.type == NavPacketType::Heartbeat) {
+        return false;
+    }
+
+    state = packet.state;
+    return true;
 }
 
 bool parseNavStateJson(const char* json, size_t length, NavState& state) {

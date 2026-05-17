@@ -171,6 +171,22 @@ tools/steedpilot_send fixtures/navigation-roundabout.json
 
 The sender chunks the JSON over BLE and terminates each packet with a newline. The ESP32 buffers the chunks, parses the complete JSON packet, and immediately renders the resulting `NavState`.
 
+Packets can be sent as full state, partial update, or heartbeat messages:
+
+```json
+{ "v": 1, "type": "state", "mode": "navigation", "maneuver": "turnLeft" }
+```
+
+```json
+{ "v": 1, "type": "update", "distanceToManeuverMeters": 178, "speed": { "current": 42 } }
+```
+
+```json
+{ "v": 1, "type": "heartbeat" }
+```
+
+`state` replaces the device navigation state, `update` patches only the fields present, and `heartbeat` refreshes the no-phone timeout without changing the visible screen.
+
 Roundabout fixtures can include relative exit angles so the device can draw exits closer to real life:
 
 ```json

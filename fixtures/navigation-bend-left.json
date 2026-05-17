@@ -1,5 +1,6 @@
 {
   "v": 1,
+  "type": "state",
   "mode": "navigation",
   "link": "connected",
   "maneuver": "bendLeft",
