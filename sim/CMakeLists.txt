@@ -12,6 +12,7 @@ add_executable(steedpilot-sim
     main.cpp
     SdlDisplay.cpp
     ../src/App.cpp
+    ../src/NavJson.cpp
     ../src/Units.cpp
     ../src/generated/FontAtlas.c
 )

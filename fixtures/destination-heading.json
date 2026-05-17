@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "mode": "destination",
+  "link": "connected",
+  "distanceToDestinationMeters": 18400,
+  "destinationBearingDegrees": 35,
+  "tripProgressComplete": 32
+}

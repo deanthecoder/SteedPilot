@@ -11,11 +11,15 @@
 #include "SdlDisplay.h"
 
 #include "SteedPilot/App.h"
+#include "SteedPilot/NavJson.h"
 
 #include <SDL.h>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -70,6 +74,22 @@ SteedPilot::NavState scenarioFor(uint32_t elapsedMs) {
     }
 
     return state;
+}
+
+bool loadFixture(const std::string& path, SteedPilot::NavState& state) {
+    std::ifstream file(path);
+    if (!file) {
+        std::cerr << "Could not open fixture: " << path << "\n";
+        return false;
+    }
+
+    const std::string json((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (!SteedPilot::parseNavStateJson(json.c_str(), json.size(), state)) {
+        std::cerr << "Could not parse fixture: " << path << "\n";
+        return false;
+    }
+
+    return true;
 }
 
 SteedPilot::NavState navigationState(SteedPilot::Maneuver maneuver, int32_t distanceMeters) {
@@ -136,18 +156,54 @@ int exportScreenshots() {
     SteedPilot::App app(units);
     SdlImage logo;
 
+    const std::vector<std::pair<const char*, const char*>> fixtures = {
+        {"fixtures/navigation-ahead.json", "img/navigation-ahead.png"},
+        {"fixtures/navigation-left.json", "img/navigation-left.png"},
+        {"fixtures/navigation-bend-left.json", "img/navigation-bend-left.png"},
+        {"fixtures/navigation-u-turn.json", "img/navigation-u-turn.png"},
+        {"fixtures/navigation-roundabout.json", "img/navigation-roundabout.png"},
+        {"fixtures/navigation-speed-warning.json", "img/navigation-speed-warning.png"},
+        {"fixtures/destination-heading.json", "img/destination-heading.png"},
+    };
+
     bool ok = true;
     ok = display.loadPng("img/DTC.png", logo) && ok;
     ok = exportSplashScreenshot(display, logo, "img/startup-dtc.png") && ok;
-    ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::Continue, 420), "img/navigation-ahead.png") && ok;
-    ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::TurnLeft, 180), "img/navigation-left.png") && ok;
-    ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::BendLeft, 120), "img/navigation-bend-left.png") && ok;
-    ok = exportScreenshot(app, display, navigationState(SteedPilot::Maneuver::UTurn, 90), "img/navigation-u-turn.png") && ok;
-    ok = exportScreenshot(app, display, roundaboutState(), "img/navigation-roundabout.png") && ok;
-    ok = exportScreenshot(app, display, speedingState(), "img/navigation-speed-warning.png") && ok;
-    ok = exportScreenshot(app, display, destinationState(), "img/destination-heading.png") && ok;
+
+    for (const auto& fixture : fixtures) {
+        SteedPilot::NavState state;
+        ok = loadFixture(fixture.first, state) && exportScreenshot(app, display, state, fixture.second) && ok;
+    }
 
     return ok ? 0 : 1;
+}
+
+int renderFixture(const std::string& fixturePath, const std::string& outputPath) {
+    SdlDisplay display(360, 360, outputPath.empty() ? 2 : 1);
+    if (!display.ok()) {
+        return 1;
+    }
+
+    SteedPilot::UnitSettings units;
+    units.distance = SteedPilot::DistanceUnitPreference::MilesMeters;
+    SteedPilot::App app(units);
+    SteedPilot::NavState state;
+    if (!loadFixture(fixturePath, state)) {
+        return 1;
+    }
+
+    app.setState(state);
+    app.render(display);
+
+    if (!outputPath.empty()) {
+        return display.savePng(outputPath.c_str()) ? 0 : 1;
+    }
+
+    while (display.poll()) {
+        SDL_Delay(16);
+    }
+
+    return 0;
 }
 
 } // namespace
@@ -155,6 +211,14 @@ int exportScreenshots() {
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--export-screenshots") {
         return exportScreenshots();
+    }
+
+    if (argc > 2 && std::string(argv[1]) == "--fixture") {
+        return renderFixture(argv[2], "");
+    }
+
+    if (argc > 4 && std::string(argv[1]) == "--export-fixture") {
+        return renderFixture(argv[2], argv[4]);
     }
 
     SdlDisplay display(360, 360, 2);

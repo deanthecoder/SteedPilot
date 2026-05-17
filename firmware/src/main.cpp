@@ -9,6 +9,7 @@
 // THE SOFTWARE IS PROVIDED AS IS, WITHOUT WARRANTY OF ANY KIND.
 
 #include "FirmwareDisplay.h"
+#include "FirmwareBle.h"
 
 #include "SteedPilot/App.h"
 
@@ -24,7 +25,11 @@ constexpr uint32_t DemoScreenMs = 3500;
 constexpr int DemoScreenCount = 7;
 
 FirmwareDisplay display;
+FirmwareBle ble;
 SteedPilot::App app;
+bool liveBleMode = false;
+volatile bool pendingBleState = false;
+SteedPilot::NavState nextBleState;
 
 uint8_t splashOpacity(uint32_t elapsedMs) {
     if (elapsedMs < SplashFadeInMs) {
@@ -97,8 +102,20 @@ SteedPilot::NavState demoState(int screen) {
 }
 
 void renderDemoScreen(int screen) {
+    if (liveBleMode) {
+        return;
+    }
+
+    Serial.printf("Demo screen rendered: %d\n", screen);
     app.setState(demoState(screen));
     app.render(display);
+}
+
+void applyBleState(const SteedPilot::NavState& state) {
+    liveBleMode = true;
+    nextBleState = state;
+    pendingBleState = true;
+    Serial.printf("BLE state queued: mode=%d maneuver=%d distance=%ld\n", (int)state.mode, (int)state.maneuver, (long)state.distanceToManeuverMeters);
 }
 
 } // namespace
@@ -118,6 +135,7 @@ void setup() {
         delay(16);
     }
 
+    ble.begin(applyBleState);
     renderDemoScreen(0);
     Serial.println("Demo screen drawn");
 }
@@ -131,7 +149,14 @@ void loop() {
     app.tick(now - lastTick);
     lastTick = now;
 
-    if (now - lastSwitch >= DemoScreenMs) {
+    if (pendingBleState) {
+        pendingBleState = false;
+        app.setState(nextBleState);
+        app.render(display);
+        Serial.printf("BLE state rendered: mode=%d maneuver=%d distance=%ld\n", (int)nextBleState.mode, (int)nextBleState.maneuver, (long)nextBleState.distanceToManeuverMeters);
+    }
+
+    if (!liveBleMode && now - lastSwitch >= DemoScreenMs) {
         screen = (screen + 1) % DemoScreenCount;
         renderDemoScreen(screen);
         lastSwitch = now;

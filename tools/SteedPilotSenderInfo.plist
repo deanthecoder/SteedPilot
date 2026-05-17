@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.deanthecoder.steedpilot.sender</string>
+    <key>CFBundleExecutable</key>
+    <string>SteedPilotSender</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleName</key>
+    <string>SteedPilot Sender</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>SteedPilot sends navigation fixture JSON to the ESP32 display over Bluetooth.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>SteedPilot sends navigation fixture JSON to the ESP32 display over Bluetooth.</string>
+</dict>
+</plist>

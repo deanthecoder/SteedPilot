@@ -111,6 +111,21 @@ void drawSpeedWarning(Display& display, const NavState& state) {
     display.circle(centerX(display), centerY(display), faceRadius(display) - 2, Color{(uint8_t)red, (uint8_t)green, (uint8_t)blue}, 7);
 }
 
+void drawLinkStatus(Display& display, const NavState& state) {
+    if (state.linkState == LinkState::Connected && state.connected) {
+        return;
+    }
+
+    const int x = centerX(display) + 86;
+    const int y = 76;
+    const Color color = state.linkState == LinkState::Pairing ? Palette::Cyan : Palette::Muted;
+    display.text(x, y, "BT", 1, color, TextAlign::Center);
+
+    if (state.linkState == LinkState::Disconnected || !state.connected) {
+        display.line(x - 10, y + 2, x + 10, y + 18, Palette::Red, 2);
+    }
+}
+
 void drawArrow(Display& display, int cx, int cy, int length, float degrees, Color color) {
     const float angle = (degrees - 90.0f) * Pi / 180.0f;
     const float sideA = angle + 2.45f;
@@ -189,11 +204,16 @@ void drawRoundabout(Display& display, int cx, int cy, const NavState& state) {
     const int routeThickness = 9;
     const float startDegrees = -155.0f;
     const float stepDegrees = 250.0f / (float)(exitCount > 1 ? exitCount - 1 : 1);
-    const float targetDegrees = startDegrees + stepDegrees * (float)(targetExit - 1);
+    const bool hasAngles = state.roundaboutExitAngleCount > 0;
+    const float targetDegrees = hasAngles && targetExit <= state.roundaboutExitAngleCount
+        ? (float)state.roundaboutExitAngles[targetExit - 1]
+        : startDegrees + stepDegrees * (float)(targetExit - 1);
 
     display.circle(cx, cy, radius, Palette::Dim, mutedExitThickness);
     for (int i = 0; i < exitCount; ++i) {
-        const float degrees = startDegrees + stepDegrees * (float)i;
+        const float degrees = hasAngles && i < state.roundaboutExitAngleCount
+            ? (float)state.roundaboutExitAngles[i]
+            : startDegrees + stepDegrees * (float)i;
         const float radians = (degrees - 90.0f) * Pi / 180.0f;
         const int innerX = cx + (int)(std::cos(radians) * (radius + mutedExitThickness / 2));
         const int innerY = cy + (int)(std::sin(radians) * (radius + mutedExitThickness / 2));
@@ -317,6 +337,7 @@ void App::renderNavigation(Display& display) {
     drawTripProgressArc(display, _state);
     drawManeuverProgressArc(display, _state);
     drawSpeedWarning(display, _state);
+    drawLinkStatus(display, _state);
 
     const int cx = centerX(display);
     const int cy = centerY(display);
@@ -344,6 +365,7 @@ void App::renderNavigation(Display& display) {
 void App::renderDestination(Display& display) {
     drawCircularShell(display);
     drawTripProgressArc(display, _state);
+    drawLinkStatus(display, _state);
 
     const int cx = centerX(display);
     const int cy = centerY(display);
@@ -354,6 +376,7 @@ void App::renderDestination(Display& display) {
 
 void App::renderRideInfo(Display& display) {
     drawCircularShell(display);
+    drawLinkStatus(display, _state);
 
     display.text(centerX(display), centerY(display) - 36, "RIDE", 4, Palette::White, TextAlign::Center);
     drawDistance(display, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::Amber);

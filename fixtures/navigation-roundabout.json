@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "mode": "navigation",
+  "link": "connected",
+  "maneuver": "roundabout",
+  "distanceToManeuverMeters": 260,
+  "distanceToDestinationMeters": 18400,
+  "maneuverProgressRemaining": 58,
+  "tripProgressComplete": 44,
+  "roundabout": {
+    "exit": 3,
+    "exitCount": 5,
+    "exits": [
+      { "index": 1, "angleDegrees": -105 },
+      { "index": 2, "angleDegrees": -20 },
+      { "index": 3, "angleDegrees": 35 },
+      { "index": 4, "angleDegrees": 95 },
+      { "index": 5, "angleDegrees": 150 }
+    ]
+  }
+}

@@ -40,6 +40,14 @@ enum class SpeedUnit {
     Kph
 };
 
+constexpr int MaxRoundaboutExits = 8;
+
+enum class LinkState {
+    Connected,
+    Pairing,
+    Disconnected
+};
+
 struct NavState {
     DisplayMode mode = DisplayMode::Navigation;
     Maneuver maneuver = Maneuver::Continue;
@@ -50,10 +58,13 @@ struct NavState {
     int16_t destinationBearingDegrees = 35;
     int8_t roundaboutExitCount = 0;
     int8_t roundaboutExit = 0;
+    int16_t roundaboutExitAngles[MaxRoundaboutExits] = {};
+    int8_t roundaboutExitAngleCount = 0;
     int16_t currentSpeed = 0;
     int16_t speedLimit = 0;
     SpeedUnit speedUnit = SpeedUnit::Mph;
     bool connected = true;
+    LinkState linkState = LinkState::Connected;
 };
 
 } // namespace SteedPilot

@@ -99,6 +99,18 @@ The desktop simulator can export reference screenshots for README updates and vi
 ./sim/build/steedpilot-sim --export-screenshots
 ```
 
+Render a single JSON fixture in the simulator:
+
+```sh
+./sim/build/steedpilot-sim --fixture fixtures/navigation-roundabout.json
+```
+
+Export a single fixture to PNG:
+
+```sh
+./sim/build/steedpilot-sim --export-fixture fixtures/navigation-roundabout.json --output /tmp/roundabout.png
+```
+
 ![Navigation ahead](img/navigation-ahead.png)
 ![Navigation left](img/navigation-left.png)
 ![Navigation bend left](img/navigation-bend-left.png)
@@ -147,6 +159,34 @@ The simulator should allow:
 
 The ESP32 firmware and desktop simulator should share as much rendering and state-management logic as possible.
 
+## BLE Fixture Loop
+The first live-device development loop uses JSON fixtures as the protocol source of truth.
+
+The firmware advertises a `SteedPilot` BLE peripheral with one writable navigation-state characteristic. A Mac can send any fixture directly to the ESP32:
+
+```sh
+tools/steedpilot_send fixtures/navigation-roundabout.json
+```
+
+The sender chunks the JSON over BLE and terminates each packet with a newline. The ESP32 buffers the chunks, parses the complete JSON packet, and immediately renders the resulting `NavState`.
+
+Roundabout fixtures can include relative exit angles so the device can draw exits closer to real life:
+
+```json
+{
+  "maneuver": "roundabout",
+  "roundabout": {
+    "exit": 3,
+    "exitCount": 5,
+    "exits": [
+      { "index": 1, "angleDegrees": -105 },
+      { "index": 2, "angleDegrees": -20 },
+      { "index": 3, "angleDegrees": 35 }
+    ]
+  }
+}
+```
+
 ## Project Principles
 - No full map rendering on the device.
 - The iPhone handles the complex logic.
@@ -157,3 +197,10 @@ The ESP32 firmware and desktop simulator should share as much rendering and stat
 
 ## Status
 Early planning and prototyping.
+
+# Notes
+- I'd like to support offline usage, if possible.
+- We should ideally allow route recalculation.
+- Think about traffic reporting.
+- Must support route planning that avoids motorways. (I only have CBT license)
+- When destination is reached, show route summary. Time, distance, average speed(?), times speed limit was exceeded
