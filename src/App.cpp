@@ -159,6 +159,17 @@ void drawArrowHead(Display& display, int tipX, int tipY, float degrees, int leng
     display.line(tipX, tipY, wingBX, wingBY, color, thickness);
 }
 
+void drawContinueLane(Display& display, int cx, int cy, Color color) {
+    const int topY = cy - 70;
+    const int bottomY = cy + 62;
+    const int topHalfWidth = 18;
+    const int bottomHalfWidth = 66;
+    const int thickness = 8;
+
+    display.line(cx - bottomHalfWidth, bottomY, cx - topHalfWidth, topY, color, thickness);
+    display.line(cx + bottomHalfWidth, bottomY, cx + topHalfWidth, topY, color, thickness);
+}
+
 void drawTurnLeft(Display& display, int cx, int cy, Color color) {
     const int thickness = 9;
     const Color continuation{22, 46, 48};
@@ -358,6 +369,8 @@ void App::renderNavigation(Display& display) {
         drawTurnLeft(display, cx, cy - 36 + GraphicOffsetY, Palette::Cyan);
     } else if (_state.maneuver == Maneuver::UTurn) {
         drawUTurn(display, cx, cy - 52 + GraphicOffsetY, Palette::Cyan);
+    } else if (_state.maneuver == Maneuver::Continue) {
+        drawContinueLane(display, cx, cy - 34 + GraphicOffsetY, Palette::Cyan);
     } else {
         drawArrow(display, cx, cy - 34 + GraphicOffsetY, 82, maneuverAngle(_state.maneuver), Palette::Cyan);
     }
