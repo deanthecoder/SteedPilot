@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var waypointEditMode = EditMode.inactive
     @State private var showDeveloperTools = false
     @State private var pendingLocationRecenter = false
+    @State private var selectedRideMode = RideMode.directions
     @State private var waypoints: [RouteWaypoint] = []
     @State private var routeLegs: [RouteLeg] = []
     @State private var isCalculatingRoute = false
@@ -63,6 +64,10 @@ struct ContentView: View {
                 }
 
                 routeBuilderSheet(screenHeight: geometry.size.height, bottomInset: geometry.safeAreaInsets.bottom)
+
+                if routeActive {
+                    rideStatusOverlay(screenHeight: geometry.size.height, bottomInset: geometry.safeAreaInsets.bottom)
+                }
             }
             .ignoresSafeArea(edges: .bottom)
             .background(Color.black)
@@ -193,11 +198,6 @@ struct ContentView: View {
                 Image(systemName: "location.fill")
             }
             .buttonStyle(FloatingMapButtonStyle())
-
-            Button(action: showSettings) {
-                Image(systemName: "gearshape.fill")
-            }
-            .buttonStyle(FloatingMapButtonStyle())
         }
     }
 
@@ -216,12 +216,12 @@ struct ContentView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: panelState == .collapsed ? 58 : 20)
+                .frame(height: panelState == .collapsed ? 58 : 34)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .padding(.top, panelState == .collapsed ? 8 : 10)
-            .padding(.bottom, panelState == .collapsed ? max(bottomInset, 12) : 8)
+            .padding(.top, panelState == .collapsed ? 8 : 6)
+            .padding(.bottom, panelState == .collapsed ? max(bottomInset, 12) : 0)
             .gesture(
                 DragGesture(minimumDistance: 12)
                     .onEnded { value in
@@ -230,15 +230,21 @@ struct ContentView: View {
             )
 
             if panelState != .collapsed {
+                Divider()
+                    .overlay(Color.white.opacity(0.10))
+
                 VStack(spacing: 12) {
                     placeSearchRow
                     selectedTargetRow
                     routeBuilderActions
                     waypointEditList
+                        .frame(maxHeight: .infinity)
                 }
                 .padding(.horizontal, 14)
+                .padding(.top, 12)
                 .padding(.bottom, bottomInset + 14)
-                .frame(maxHeight: routeBuilderHeight(for: screenHeight))
+                .frame(height: routeBuilderHeight(for: screenHeight))
+                .clipped()
             }
         }
         .foregroundStyle(.white)
@@ -298,6 +304,19 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(Color.white.opacity(0.08), lineWidth: 1)
             )
+
+            Button(action: showSettings) {
+                Image(systemName: "gearshape.fill")
+            }
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(width: 46, height: 46)
+            .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+            .accessibilityLabel("Settings")
         }
         .font(.subheadline)
         .buttonStyle(.plain)
@@ -355,20 +374,92 @@ struct ContentView: View {
     @ViewBuilder
     private var routeBuilderActions: some View {
         if !waypoints.isEmpty {
-            HStack {
-                Button(action: showSaveRouteDialog) {
-                    Label("Save route", systemImage: "square.and.arrow.down")
+            VStack(spacing: 10) {
+                if canStartRide {
+                    HStack(spacing: 6) {
+                        ForEach(RideMode.allCases) { mode in
+                            Button {
+                                selectedRideMode = mode
+                            } label: {
+                                Label(mode.title, systemImage: mode.icon)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(RideModeButtonStyle(isSelected: selectedRideMode == mode))
+                        }
+                    }
+                    .padding(3)
+                    .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                    )
+
+                    Button(action: startRoute) {
+                        Label("Start ride", systemImage: selectedRideMode.icon)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(StartRideButtonStyle())
+                    .disabled(isCalculatingRoute || routeLegs.isEmpty)
                 }
-                .disabled(waypoints.count < 2 || isCalculatingRoute)
+
+                Divider()
+                    .overlay(Color.white.opacity(0.10))
+
+                HStack {
+                    Button(action: showSaveRouteDialog) {
+                        Label("Save route", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(waypoints.count < 2 || isCalculatingRoute)
+
+                    Spacer()
+
+                    Button(role: .destructive, action: clearPlannedRoute) {
+                        Label("Clear route", systemImage: "trash")
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(SecondaryRouteButtonStyle())
+            }
+        }
+    }
+
+    private func rideStatusOverlay(screenHeight: CGFloat, bottomInset: CGFloat) -> some View {
+        VStack {
+            Spacer()
+
+            HStack(spacing: 12) {
+                Image(systemName: selectedRideMode.icon)
+                    .font(.headline)
+                    .foregroundStyle(.cyan)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selectedRideMode.activeTitle)
+                        .font(.subheadline.weight(.semibold))
+                    Text("SteedPilot \(sender.status.lowercased())")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 Spacer()
 
-                Button(role: .destructive, action: clearPlannedRoute) {
-                    Label("Clear route", systemImage: "trash")
+                Button(action: endRoute) {
+                    Text("End")
                 }
+                .buttonStyle(SecondaryRouteButtonStyle())
             }
-            .font(.caption.weight(.semibold))
-            .buttonStyle(SecondaryRouteButtonStyle())
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color(red: 0.045, green: 0.050, blue: 0.060).opacity(0.86), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.28), radius: 12, y: 4)
+            .padding(.horizontal, 14)
+            .padding(.bottom, routeBuilderVisibleHeight(for: screenHeight, bottomInset: bottomInset) + 10)
         }
     }
 
@@ -419,9 +510,10 @@ struct ContentView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .frame(minHeight: 92)
+            .frame(minHeight: 92, maxHeight: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
+        .frame(maxHeight: .infinity)
     }
 
     private var routeLibrarySheet: some View {
@@ -734,6 +826,10 @@ struct ContentView: View {
         return "\(waypoints.count) route point\(waypoints.count == 1 ? "" : "s")"
     }
 
+    private var canStartRide: Bool {
+        waypoints.count > 1 && !routeActive
+    }
+
     private var routeDistanceText: String {
         if isCalculatingRoute {
             return "..."
@@ -806,9 +902,18 @@ struct ContentView: View {
             case .collapsed:
                 return 0
             case .medium:
-                return min(330, screenHeight * 0.38)
+                return canStartRide ? min(430, screenHeight * 0.50) : min(330, screenHeight * 0.38)
             case .expanded:
                 return min(610, screenHeight * 0.70)
+        }
+    }
+
+    private func routeBuilderVisibleHeight(for screenHeight: CGFloat, bottomInset: CGFloat) -> CGFloat {
+        switch panelState {
+            case .collapsed:
+                return 8 + 58 + max(bottomInset, 12)
+            case .medium, .expanded:
+                return 6 + 34 + 1 + routeBuilderHeight(for: screenHeight)
         }
     }
 
@@ -847,17 +952,72 @@ struct ContentView: View {
     }
 
     private func startRoute() {
-        if let payload = NavFixtures.loadStubRouteStart() {
-            sender.send(payload)
-            routeActive = true
-            panelState = .collapsed
+        guard let payload = rideStartPayload() else {
+            return
         }
+
+        sender.send(payload)
+        routeActive = true
+        panelState = .collapsed
     }
 
     private func endRoute() {
         sender.send(NavFixtures.clearRoute)
         routeActive = false
         panelState = .medium
+    }
+
+    private func rideStartPayload() -> Data? {
+        switch selectedRideMode {
+            case .directions:
+                return directionsRideStartPayload()
+            case .heading:
+                return headingRideStartPayload()
+        }
+    }
+
+    private func directionsRideStartPayload() -> Data? {
+        let distanceToDestination = Int(routeLegs.reduce(0) { $0 + $1.distance }.rounded())
+        let distanceToManeuver = Int((routeLegs.first?.distance ?? CLLocationDistance(distanceToDestination)).rounded())
+
+        return makeNavStatePayload([
+            "mode": "navigation",
+            "maneuver": "continue",
+            "distanceToManeuverMeters": max(distanceToManeuver, 0),
+            "distanceToDestinationMeters": max(distanceToDestination, 0),
+            "maneuverProgressRemaining": 100,
+            "tripProgressComplete": 0
+        ])
+    }
+
+    private func headingRideStartPayload() -> Data? {
+        guard let start = waypoints.first?.coordinate,
+              let destination = waypoints.last?.coordinate else {
+            return nil
+        }
+
+        let distanceToDestination = Int(routeLegs.reduce(0) { $0 + $1.distance }.rounded())
+
+        return makeNavStatePayload([
+            "mode": "destination",
+            "distanceToDestinationMeters": max(distanceToDestination, 0),
+            "destinationBearingDegrees": start.bearingDegrees(to: destination),
+            "tripProgressComplete": 0
+        ])
+    }
+
+    private func makeNavStatePayload(_ fields: [String: Any]) -> Data? {
+        var payload: [String: Any] = [
+            "v": 1,
+            "type": "state",
+            "link": "connected"
+        ]
+
+        fields.forEach { key, value in
+            payload[key] = value
+        }
+
+        return try? JSONSerialization.data(withJSONObject: payload)
     }
 
     private func recenterMap() {
@@ -1609,6 +1769,34 @@ private struct RouteLeg: Identifiable {
     let polyline: MKPolyline
 }
 
+private enum RideMode: String, CaseIterable, Identifiable {
+    case directions
+    case heading
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+            case .directions: return "Directions"
+            case .heading: return "Heading"
+        }
+    }
+
+    var activeTitle: String {
+        switch self {
+            case .directions: return "Turn-by-turn"
+            case .heading: return "Destination heading"
+        }
+    }
+
+    var icon: String {
+        switch self {
+            case .directions: return "arrow.triangle.turn.up.right.diamond.fill"
+            case .heading: return "location.north.line.fill"
+        }
+    }
+}
+
 private enum DistanceUnitPreference: String, CaseIterable, Identifiable {
     case miles
     case kilometres
@@ -1654,6 +1842,19 @@ private enum WaypointKind {
 private extension CLLocationCoordinate2D {
     func isVisuallySame(as other: CLLocationCoordinate2D) -> Bool {
         abs(latitude - other.latitude) < 0.00001 && abs(longitude - other.longitude) < 0.00001
+    }
+
+    func bearingDegrees(to destination: CLLocationCoordinate2D) -> Int {
+        let startLatitude = latitude * .pi / 180
+        let startLongitude = longitude * .pi / 180
+        let destinationLatitude = destination.latitude * .pi / 180
+        let destinationLongitude = destination.longitude * .pi / 180
+        let longitudeDelta = destinationLongitude - startLongitude
+        let y = sin(longitudeDelta) * cos(destinationLatitude)
+        let x = cos(startLatitude) * sin(destinationLatitude) - sin(startLatitude) * cos(destinationLatitude) * cos(longitudeDelta)
+        let bearing = atan2(y, x) * 180 / .pi
+
+        return Int((bearing + 360).truncatingRemainder(dividingBy: 360).rounded())
     }
 }
 
@@ -1789,6 +1990,34 @@ private struct PrimaryRouteButtonStyle: ButtonStyle {
             .padding(.horizontal, 18)
             .frame(height: 44)
             .background(active ? Color.red.opacity(0.82) : Color.cyan.opacity(configuration.isPressed ? 0.65 : 0.88), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct StartRideButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.black)
+            .padding(.horizontal, 18)
+            .frame(height: 44)
+            .background(Color.cyan.opacity(configuration.isPressed ? 0.72 : 0.92), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .opacity(configuration.isPressed ? 0.86 : 1)
+    }
+}
+
+private struct RideModeButtonStyle: ButtonStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(isSelected ? .black : .white)
+            .padding(.horizontal, 8)
+            .frame(height: 34)
+            .background(
+                isSelected ? Color.cyan.opacity(configuration.isPressed ? 0.78 : 0.94) : Color.white.opacity(configuration.isPressed ? 0.14 : 0.07),
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
     }
 }
 
