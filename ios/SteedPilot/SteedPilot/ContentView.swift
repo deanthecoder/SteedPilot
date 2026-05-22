@@ -28,6 +28,7 @@ struct ContentView: View {
     @State private var showDeveloperTools = false
     @State private var pendingLocationRecenter = false
     @State private var selectedRideMode = RideMode.directions
+    @State private var smoothedDestinationBearing: Double?
     @State private var waypoints: [RouteWaypoint] = []
     @State private var routeLegs: [RouteLeg] = []
     @State private var isCalculatingRoute = false
@@ -44,6 +45,7 @@ struct ContentView: View {
 
     private let fixtures = NavFixtures.loadFixtures()
     private let replayRoute = NavFixtures.loadReplayRoute()
+    private let rideUpdateTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     var body: some View {
         GeometryReader { geometry in
@@ -84,6 +86,9 @@ struct ContentView: View {
             }
             .onChange(of: avoidMotorways) { _, _ in
                 recalculateRoute()
+            }
+            .onReceive(rideUpdateTimer) { _ in
+                sendRideUpdate()
             }
             .onAppear(perform: loadSavedRoutes)
             .alert("Save route", isPresented: $showingSaveRouteDialog) {
@@ -956,6 +961,8 @@ struct ContentView: View {
             return
         }
 
+        smoothedDestinationBearing = nil
+        locationProvider.startRideTracking()
         sender.send(payload)
         routeActive = true
         panelState = .collapsed
@@ -963,8 +970,23 @@ struct ContentView: View {
 
     private func endRoute() {
         sender.send(NavFixtures.clearRoute)
+        locationProvider.stopRideTracking()
+        smoothedDestinationBearing = nil
         routeActive = false
         panelState = .medium
+    }
+
+    private func sendRideUpdate() {
+        guard routeActive else {
+            return
+        }
+
+        locationProvider.requestCurrentLocation()
+        guard let payload = rideStartPayload() else {
+            return
+        }
+
+        sender.send(payload)
     }
 
     private func rideStartPayload() -> Data? {
@@ -977,33 +999,139 @@ struct ContentView: View {
     }
 
     private func directionsRideStartPayload() -> Data? {
-        let distanceToDestination = Int(routeLegs.reduce(0) { $0 + $1.distance }.rounded())
-        let distanceToManeuver = Int((routeLegs.first?.distance ?? CLLocationDistance(distanceToDestination)).rounded())
+        let snapshot = rideNavigationSnapshot()
 
         return makeNavStatePayload([
             "mode": "navigation",
             "maneuver": "continue",
-            "distanceToManeuverMeters": max(distanceToManeuver, 0),
-            "distanceToDestinationMeters": max(distanceToDestination, 0),
-            "maneuverProgressRemaining": 100,
-            "tripProgressComplete": 0
+            "distanceToManeuverMeters": snapshot.distanceToManeuverMeters,
+            "distanceToDestinationMeters": snapshot.distanceToDestinationMeters,
+            "maneuverProgressRemaining": snapshot.maneuverProgressRemaining,
+            "tripProgressComplete": snapshot.tripProgressComplete
         ])
     }
 
     private func headingRideStartPayload() -> Data? {
-        guard let start = waypoints.first?.coordinate,
-              let destination = waypoints.last?.coordinate else {
-            return nil
-        }
-
-        let distanceToDestination = Int(routeLegs.reduce(0) { $0 + $1.distance }.rounded())
+        let snapshot = rideNavigationSnapshot()
 
         return makeNavStatePayload([
             "mode": "destination",
-            "distanceToDestinationMeters": max(distanceToDestination, 0),
-            "destinationBearingDegrees": start.bearingDegrees(to: destination),
-            "tripProgressComplete": 0
+            "distanceToDestinationMeters": snapshot.distanceToDestinationMeters,
+            "destinationBearingDegrees": snapshot.destinationBearingDegrees,
+            "tripProgressComplete": snapshot.tripProgressComplete
         ])
+    }
+
+    private func rideNavigationSnapshot() -> RideNavigationSnapshot {
+        let totalDistance = routeLegs.reduce(0) { $0 + $1.distance }
+        let fallbackDistance = Int(totalDistance.rounded())
+        let fallbackManeuver = Int((routeLegs.first?.distance ?? CLLocationDistance(fallbackDistance)).rounded())
+        let fallbackBearing = fallbackDestinationBearing()
+
+        guard totalDistance > 0 else {
+            return RideNavigationSnapshot(
+                distanceToDestinationMeters: max(fallbackDistance, 0),
+                distanceToManeuverMeters: max(fallbackManeuver, 0),
+                destinationBearingDegrees: fallbackBearing,
+                tripProgressComplete: 0,
+                maneuverProgressRemaining: 100
+            )
+        }
+
+        guard let currentCoordinate = locationProvider.currentCoordinate,
+              let routeProgress = nearestRouteProgress(to: currentCoordinate) else {
+            return RideNavigationSnapshot(
+                distanceToDestinationMeters: max(fallbackDistance, 0),
+                distanceToManeuverMeters: max(fallbackManeuver, 0),
+                destinationBearingDegrees: fallbackBearing,
+                tripProgressComplete: 0,
+                maneuverProgressRemaining: 100
+            )
+        }
+
+        let remainingDistance = max(totalDistance - routeProgress.distanceFromRouteStart, 0)
+        let remainingManeuver = max(routeProgress.legDistance - routeProgress.distanceFromLegStart, 0)
+        let tripProgress = totalDistance > 0 ? Int(((routeProgress.distanceFromRouteStart / totalDistance) * 100).rounded()) : 0
+        let maneuverProgress = routeProgress.legDistance > 0 ? Int(((remainingManeuver / routeProgress.legDistance) * 100).rounded()) : 0
+
+        return RideNavigationSnapshot(
+            distanceToDestinationMeters: Int(remainingDistance.rounded()),
+            distanceToManeuverMeters: Int(remainingManeuver.rounded()),
+            destinationBearingDegrees: relativeDestinationBearing(from: currentCoordinate, routeProgress: routeProgress),
+            tripProgressComplete: max(0, min(100, tripProgress)),
+            maneuverProgressRemaining: max(0, min(100, maneuverProgress))
+        )
+    }
+
+    private func nearestRouteProgress(to coordinate: CLLocationCoordinate2D) -> RouteProgress? {
+        var totalBeforeLeg: CLLocationDistance = 0
+        var nearestProgress: RouteProgress?
+
+        for leg in routeLegs {
+            guard let legProgress = leg.polyline.progressNearest(to: coordinate) else {
+                totalBeforeLeg += leg.distance
+                continue
+            }
+
+            let distanceFraction = legProgress.polylineLength > 0 ? legProgress.distanceFromStart / legProgress.polylineLength : 0
+            let distanceFromLegStart = max(0, min(leg.distance, leg.distance * distanceFraction))
+            let routeProgress = RouteProgress(
+                distanceToRoute: legProgress.distanceToRoute,
+                distanceFromLegStart: distanceFromLegStart,
+                distanceFromRouteStart: totalBeforeLeg + distanceFromLegStart,
+                legDistance: leg.distance,
+                routeBearingDegrees: legProgress.routeBearingDegrees
+            )
+
+            if nearestProgress == nil || routeProgress.distanceToRoute < nearestProgress!.distanceToRoute {
+                nearestProgress = routeProgress
+            }
+
+            totalBeforeLeg += leg.distance
+        }
+
+        return nearestProgress
+    }
+
+    private func fallbackDestinationBearing() -> Int {
+        guard let start = waypoints.first?.coordinate,
+              let destination = waypoints.last?.coordinate else {
+            return 0
+        }
+
+        return start.bearingDegrees(to: destination)
+    }
+
+    private func destinationBearing(from coordinate: CLLocationCoordinate2D) -> Int {
+        guard let destination = waypoints.last?.coordinate else {
+            return fallbackDestinationBearing()
+        }
+
+        return coordinate.bearingDegrees(to: destination)
+    }
+
+    private func relativeDestinationBearing(from coordinate: CLLocationCoordinate2D, routeProgress: RouteProgress) -> Int {
+        let destinationBearing = Double(destinationBearing(from: coordinate))
+        let riderBearing = locationProvider.currentCourseDegrees ?? routeProgress.routeBearingDegrees
+        let relativeBearing = normalizedBearing(destinationBearing - riderBearing)
+        let smoothedBearing = smoothedBearing(from: smoothedDestinationBearing, to: relativeBearing, alpha: 0.35)
+        smoothedDestinationBearing = smoothedBearing
+
+        return Int(smoothedBearing.rounded()) % 360
+    }
+
+    private func normalizedBearing(_ degrees: Double) -> Double {
+        let normalized = degrees.truncatingRemainder(dividingBy: 360)
+        return normalized >= 0 ? normalized : normalized + 360
+    }
+
+    private func smoothedBearing(from previous: Double?, to next: Double, alpha: Double) -> Double {
+        guard let previous else {
+            return normalizedBearing(next)
+        }
+
+        let delta = ((next - previous + 540).truncatingRemainder(dividingBy: 360)) - 180
+        return normalizedBearing(previous + (delta * alpha))
     }
 
     private func makeNavStatePayload(_ fields: [String: Any]) -> Data? {
@@ -1769,6 +1897,29 @@ private struct RouteLeg: Identifiable {
     let polyline: MKPolyline
 }
 
+private struct RideNavigationSnapshot {
+    let distanceToDestinationMeters: Int
+    let distanceToManeuverMeters: Int
+    let destinationBearingDegrees: Int
+    let tripProgressComplete: Int
+    let maneuverProgressRemaining: Int
+}
+
+private struct RouteProgress {
+    let distanceToRoute: CLLocationDistance
+    let distanceFromLegStart: CLLocationDistance
+    let distanceFromRouteStart: CLLocationDistance
+    let legDistance: CLLocationDistance
+    let routeBearingDegrees: Double
+}
+
+private struct PolylineProgress {
+    let distanceToRoute: CLLocationDistance
+    let distanceFromStart: CLLocationDistance
+    let polylineLength: CLLocationDistance
+    let routeBearingDegrees: Double
+}
+
 private enum RideMode: String, CaseIterable, Identifiable {
     case directions
     case heading
@@ -1858,6 +2009,67 @@ private extension CLLocationCoordinate2D {
     }
 }
 
+private extension MKPolyline {
+    var routeCoordinates: [CLLocationCoordinate2D] {
+        var coordinates = Array(repeating: CLLocationCoordinate2D(), count: pointCount)
+        getCoordinates(&coordinates, range: NSRange(location: 0, length: pointCount))
+        return coordinates
+    }
+
+    func progressNearest(to coordinate: CLLocationCoordinate2D) -> PolylineProgress? {
+        let coordinates = routeCoordinates
+        guard coordinates.count > 1 else {
+            return nil
+        }
+
+        let targetPoint = MKMapPoint(coordinate)
+        var distanceFromStart: CLLocationDistance = 0
+        var bestDistance = CLLocationDistance.greatestFiniteMagnitude
+        var bestDistanceFromStart: CLLocationDistance = 0
+        var bestBearing = 0.0
+
+        for (startCoordinate, endCoordinate) in zip(coordinates, coordinates.dropFirst()) {
+            let startPoint = MKMapPoint(startCoordinate)
+            let endPoint = MKMapPoint(endCoordinate)
+            let segmentDistance = startPoint.distance(to: endPoint)
+            let projectedDistance = targetPoint.projectedDistance(from: startPoint, to: endPoint)
+
+            if projectedDistance.distanceToSegment < bestDistance {
+                bestDistance = projectedDistance.distanceToSegment
+                bestDistanceFromStart = distanceFromStart + (segmentDistance * projectedDistance.fractionAlongSegment)
+                bestBearing = Double(startCoordinate.bearingDegrees(to: endCoordinate))
+            }
+
+            distanceFromStart += segmentDistance
+        }
+
+        return PolylineProgress(
+            distanceToRoute: bestDistance,
+            distanceFromStart: bestDistanceFromStart,
+            polylineLength: distanceFromStart,
+            routeBearingDegrees: bestBearing
+        )
+    }
+}
+
+private extension MKMapPoint {
+    func projectedDistance(from start: MKMapPoint, to end: MKMapPoint) -> (distanceToSegment: CLLocationDistance, fractionAlongSegment: Double) {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let lengthSquared = (dx * dx) + (dy * dy)
+
+        guard lengthSquared > 0 else {
+            return (distance(to: start), 0)
+        }
+
+        let rawFraction = (((x - start.x) * dx) + ((y - start.y) * dy)) / lengthSquared
+        let fraction = max(0, min(1, rawFraction))
+        let projectedPoint = MKMapPoint(x: start.x + (dx * fraction), y: start.y + (dy * fraction))
+
+        return (distance(to: projectedPoint), fraction)
+    }
+}
+
 private enum MapStyleOption: String, CaseIterable, Identifiable {
     case standard
     case satellite
@@ -1910,13 +2122,16 @@ private enum SampleRoute {
 
 private final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var currentCoordinate: CLLocationCoordinate2D?
+    @Published var currentCourseDegrees: Double?
 
     private let manager = CLLocationManager()
+    private var shouldTrackRide = false
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        manager.activityType = .automotiveNavigation
     }
 
     func requestCurrentLocation() {
@@ -1932,16 +2147,52 @@ private final class LocationProvider: NSObject, ObservableObject, CLLocationMana
         }
     }
 
+    func startRideTracking() {
+        shouldTrackRide = true
+        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        manager.distanceFilter = 10
+
+        switch manager.authorizationStatus {
+            case .notDetermined:
+                manager.requestWhenInUseAuthorization()
+            case .authorizedAlways, .authorizedWhenInUse:
+                manager.startUpdatingLocation()
+            case .denied, .restricted:
+                break
+            @unknown default:
+                break
+        }
+    }
+
+    func stopRideTracking() {
+        shouldTrackRide = false
+        manager.stopUpdatingLocation()
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        manager.distanceFilter = kCLDistanceFilterNone
+    }
+
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         guard manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse else {
             return
         }
 
-        manager.requestLocation()
+        if shouldTrackRide {
+            manager.startUpdatingLocation()
+        } else {
+            manager.requestLocation()
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        currentCoordinate = locations.last?.coordinate
+        guard let location = locations.last else {
+            return
+        }
+
+        currentCoordinate = location.coordinate
+
+        if location.course >= 0 && location.speed > 1.4 {
+            currentCourseDegrees = location.course
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
