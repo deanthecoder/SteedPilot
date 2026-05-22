@@ -22,7 +22,6 @@ struct ContentView: View {
     @State private var searchMessage: String?
     @State private var isSearching = false
     @State private var isAddingRouteTarget = false
-    @State private var selectedMapStyle = MapStyleOption.standard
     @State private var cameraPosition = MapCameraPosition.region(SampleRoute.region)
     @State private var panelState = RoutePanelState.medium
     @State private var waypointEditMode = EditMode.inactive
@@ -32,12 +31,14 @@ struct ContentView: View {
     @State private var routeLegs: [RouteLeg] = []
     @State private var isCalculatingRoute = false
     @State private var routeCalculationTask: Task<Void, Never>?
-    @State private var distanceUnitPreference = DistanceUnitPreference.miles
-    @State private var avoidMotorways = false
     @State private var showingSaveRouteDialog = false
     @State private var showingRouteLibrary = false
+    @State private var showingSettings = false
     @State private var saveRouteName = ""
     @State private var savedRoutes: [SavedRoute] = []
+    @AppStorage("SteedPilot.distanceUnitPreference") private var distanceUnitPreferenceRaw = DistanceUnitPreference.miles.rawValue
+    @AppStorage("SteedPilot.avoidMotorways") private var avoidMotorways = false
+    @AppStorage("SteedPilot.mapStyle") private var selectedMapStyleRaw = MapStyleOption.standard.rawValue
     @FocusState private var searchFocused: Bool
 
     private let fixtures = NavFixtures.loadFixtures()
@@ -76,6 +77,9 @@ struct ContentView: View {
             .onChange(of: waypoints.map(\.id)) { _, _ in
                 recalculateRoute()
             }
+            .onChange(of: avoidMotorways) { _, _ in
+                recalculateRoute()
+            }
             .onAppear(perform: loadSavedRoutes)
             .alert("Save route", isPresented: $showingSaveRouteDialog) {
                 TextField("Route name", text: $saveRouteName)
@@ -90,6 +94,9 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showingRouteLibrary) {
                 routeLibrarySheet
+            }
+            .sheet(isPresented: $showingSettings) {
+                settingsSheet
             }
         }
     }
@@ -154,6 +161,24 @@ struct ContentView: View {
         )
     }
 
+    private var selectedMapStyle: MapStyleOption {
+        get {
+            MapStyleOption(rawValue: selectedMapStyleRaw) ?? .standard
+        }
+        nonmutating set {
+            selectedMapStyleRaw = newValue.rawValue
+        }
+    }
+
+    private var distanceUnitPreference: DistanceUnitPreference {
+        get {
+            DistanceUnitPreference(rawValue: distanceUnitPreferenceRaw) ?? .miles
+        }
+        nonmutating set {
+            distanceUnitPreferenceRaw = newValue.rawValue
+        }
+    }
+
     private var mapControls: some View {
         VStack(spacing: 10) {
             Button(action: {}) {
@@ -167,8 +192,8 @@ struct ContentView: View {
             }
             .buttonStyle(FloatingMapButtonStyle())
 
-            Button(action: cycleMapStyle) {
-                Image(systemName: "square.3.layers.3d")
+            Button(action: showSettings) {
+                Image(systemName: "gearshape.fill")
             }
             .buttonStyle(FloatingMapButtonStyle())
         }
@@ -461,6 +486,62 @@ struct ContentView: View {
             .background(Color(red: 0.045, green: 0.050, blue: 0.060))
         }
         .preferredColorScheme(.dark)
+    }
+
+    private var settingsSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Units") {
+                    Picker("Distance", selection: distanceUnitPreferenceBinding) {
+                        ForEach(DistanceUnitPreference.allCases) { unit in
+                            Text(unit.title).tag(unit)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                Section("Route") {
+                    Toggle("Avoid motorways", isOn: $avoidMotorways)
+                }
+
+                Section("Map") {
+                    Picker("Style", selection: selectedMapStyleBinding) {
+                        ForEach(MapStyleOption.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        showingSettings = false
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color(red: 0.045, green: 0.050, blue: 0.060))
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var distanceUnitPreferenceBinding: Binding<DistanceUnitPreference> {
+        Binding {
+            distanceUnitPreference
+        } set: { unit in
+            distanceUnitPreference = unit
+        }
+    }
+
+    private var selectedMapStyleBinding: Binding<MapStyleOption> {
+        Binding {
+            selectedMapStyle
+        } set: { style in
+            selectedMapStyle = style
+        }
     }
 
     private func routeEditor(maxHeight: CGFloat, bottomInset: CGFloat) -> some View {
@@ -841,10 +922,6 @@ struct ContentView: View {
         cameraPosition = .region(MKCoordinateRegion(center: region.center, span: span))
     }
 
-    private func cycleMapStyle() {
-        selectedMapStyle = selectedMapStyle.next
-    }
-
     private func searchForPlace() {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, !isSearching else {
@@ -1005,12 +1082,13 @@ struct ContentView: View {
             request.source = MKMapItem(placemark: MKPlacemark(coordinate: start.coordinate))
             request.destination = MKMapItem(placemark: MKPlacemark(coordinate: end.coordinate))
             request.transportType = .automobile
-            request.requestsAlternateRoutes = false
+            request.requestsAlternateRoutes = avoidMotorways
+            request.highwayPreference = avoidMotorways ? .avoid : .any
 
-            // Future setting: if avoidMotorways is enabled, route through a provider that supports motorway avoidance.
-            _ = avoidMotorways
+            let routes = try await MKDirections(request: request).calculate().routes
+            let route = avoidMotorways ? routes.first { !$0.hasHighways } ?? routes.first : routes.first
 
-            guard let route = try await MKDirections(request: request).calculate().routes.first else {
+            guard let route else {
                 continue
             }
 
@@ -1175,6 +1253,10 @@ struct ContentView: View {
     private func showRouteLibrary() {
         loadSavedRoutes()
         showingRouteLibrary = true
+    }
+
+    private func showSettings() {
+        showingSettings = true
     }
 
     private func savePlannedRoute() {
@@ -1529,9 +1611,18 @@ private struct RouteLeg: Identifiable {
     let polyline: MKPolyline
 }
 
-private enum DistanceUnitPreference {
+private enum DistanceUnitPreference: String, CaseIterable, Identifiable {
     case miles
     case kilometres
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+            case .miles: return "Miles"
+            case .kilometres: return "Kilometres"
+        }
+    }
 }
 
 private enum RoutePanelState {
@@ -1591,13 +1682,6 @@ private enum MapStyleOption: String, CaseIterable, Identifiable {
         }
     }
 
-    var next: MapStyleOption {
-        switch self {
-            case .standard: return .satellite
-            case .satellite: return .hybrid
-            case .hybrid: return .standard
-        }
-    }
 }
 
 private enum SampleRoute {
