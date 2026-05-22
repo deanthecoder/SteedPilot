@@ -200,6 +200,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "SteedPilot sends navigation fixture packets to the ESP32 display over Bluetooth.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "SteedPilot sends navigation fixture packets to the ESP32 display over Bluetooth.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SteedPilot uses your location to center the route planning map.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -224,6 +225,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "SteedPilot sends navigation fixture packets to the ESP32 display over Bluetooth.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "SteedPilot sends navigation fixture packets to the ESP32 display over Bluetooth.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SteedPilot uses your location to center the route planning map.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
