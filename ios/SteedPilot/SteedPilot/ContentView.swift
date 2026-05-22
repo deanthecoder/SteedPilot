@@ -154,11 +154,13 @@ struct ContentView: View {
             .padding(.vertical, 9)
         }
         .buttonStyle(IconButtonStyle())
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .foregroundStyle(.white)
+        .background(Color(red: 0.045, green: 0.050, blue: 0.060).opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
         )
+        .shadow(color: .black.opacity(0.28), radius: 12, y: 4)
     }
 
     private var selectedMapStyle: MapStyleOption {
@@ -747,7 +749,7 @@ struct ContentView: View {
 
         let seconds = routeLegs.reduce(0) { $0 + $1.expectedTravelTime }
         guard seconds > 0 else {
-            return "-"
+            return "N/A"
         }
 
         let minutes = Int((seconds / 60).rounded())
