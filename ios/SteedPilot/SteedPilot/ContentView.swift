@@ -454,10 +454,6 @@ struct ContentView: View {
                                 }
 
                                 Spacer()
-
-                                Image(systemName: "arrow.uturn.down")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
                             }
                             .padding(.vertical, 4)
                         }
