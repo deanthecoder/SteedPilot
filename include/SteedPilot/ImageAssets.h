@@ -33,6 +33,9 @@ typedef struct SteedPilotGrayAlphaImage {
 /** Startup DTC logo bitmap. */
 extern const SteedPilotGrayAlphaImage SteedPilotDtcLogo;
 
+/** Arrival chequered flag bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotFinishFlag;
+
 #ifdef __cplusplus
 }
 #endif

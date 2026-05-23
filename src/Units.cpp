@@ -32,7 +32,7 @@ FormattedDistance formatDistanceMeters(int32_t meters, UnitSettings settings) {
 
         case DistanceUnitPreference::MilesMeters:
         default:
-            if (meters >= 1609) {
+            if (meters >= 200) {
                 return {(int32_t)((meters * 10 + 804) / 1609), 1, "mi"};
             }
             return {meters, 0, "m"};

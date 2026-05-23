@@ -15,6 +15,7 @@ add_executable(steedpilot-sim
     ../src/NavJson.cpp
     ../src/Units.cpp
     ../src/generated/FontAtlas.c
+    ../src/generated/ImageAssets.c
 )
 
 target_include_directories(steedpilot-sim PRIVATE

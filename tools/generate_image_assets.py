@@ -16,9 +16,22 @@ HEADER = """// Code authored by Dean Edis (DeanTheCoder).
 """
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_IMAGE = ROOT / "img" / "DTC.png"
 OUT_HEADER = ROOT / "include" / "SteedPilot" / "ImageAssets.h"
 OUT_SOURCE = ROOT / "src" / "generated" / "ImageAssets.c"
+IMAGES = [
+    {
+        "name": "SteedPilotDtcLogo",
+        "pixels": "SteedPilotDtcLogoPixels",
+        "source": ROOT / "img" / "DTC.png",
+        "description": "Startup DTC logo bitmap",
+    },
+    {
+        "name": "SteedPilotFinishFlag",
+        "pixels": "SteedPilotFinishFlagPixels",
+        "source": ROOT / "img" / "flag.png",
+        "description": "Arrival chequered flag bitmap",
+    },
+]
 
 
 def byte_lines(values, columns=18):
@@ -29,14 +42,26 @@ def byte_lines(values, columns=18):
     return "\n".join(lines)
 
 
-def write_outputs(image):
-    OUT_HEADER.parent.mkdir(parents=True, exist_ok=True)
-    OUT_SOURCE.parent.mkdir(parents=True, exist_ok=True)
+def load_image(definition):
+    image = Image.open(definition["source"]).convert("LA")
+    if "max_size" in definition:
+        image.thumbnail(definition["max_size"], Image.Resampling.LANCZOS)
 
+    return image
+
+
+def image_pixels(image):
     pixels = []
     for gray, alpha in image.getdata():
         pixels.append(gray)
         pixels.append(alpha)
+
+    return pixels
+
+
+def write_outputs(images):
+    OUT_HEADER.parent.mkdir(parents=True, exist_ok=True)
+    OUT_SOURCE.parent.mkdir(parents=True, exist_ok=True)
 
     header = HEADER + """#pragma once
 
@@ -60,35 +85,40 @@ typedef struct SteedPilotGrayAlphaImage {
     const uint8_t* pixels;
 } SteedPilotGrayAlphaImage;
 
-/** Startup DTC logo bitmap. */
-extern const SteedPilotGrayAlphaImage SteedPilotDtcLogo;
+"""
 
-#ifdef __cplusplus
+    for definition, _ in images:
+        header += f"/** {definition['description']}. */\n"
+        header += f"extern const SteedPilotGrayAlphaImage {definition['name']};\n\n"
+
+    header += """#ifdef __cplusplus
 }
 #endif
 """
 
+
     source = HEADER
     source += '#include "SteedPilot/ImageAssets.h"\n\n'
-    source += f"// Generated from {SOURCE_IMAGE}.\n"
-    source += "/** Interleaved grey and alpha bytes for the startup DTC logo. */\n"
-    source += "const uint8_t SteedPilotDtcLogoPixels[] = {\n"
-    source += byte_lines(pixels)
-    source += "\n};\n\n"
-    source += "/** Startup DTC logo bitmap. */\n"
-    source += "const SteedPilotGrayAlphaImage SteedPilotDtcLogo = {\n"
-    source += f"    {image.width},\n"
-    source += f"    {image.height},\n"
-    source += "    SteedPilotDtcLogoPixels,\n"
-    source += "};\n"
+    for definition, image in images:
+        source += f"// Generated from {definition['source']}.\n"
+        source += f"/** Interleaved grey and alpha bytes for {definition['description'].lower()}. */\n"
+        source += f"const uint8_t {definition['pixels']}[] = {{\n"
+        source += byte_lines(image_pixels(image))
+        source += "\n};\n\n"
+        source += f"/** {definition['description']}. */\n"
+        source += f"const SteedPilotGrayAlphaImage {definition['name']} = {{\n"
+        source += f"    {image.width},\n"
+        source += f"    {image.height},\n"
+        source += f"    {definition['pixels']},\n"
+        source += "};\n\n"
 
     OUT_HEADER.write_text(header)
     OUT_SOURCE.write_text(source)
 
 
 def main():
-    image = Image.open(SOURCE_IMAGE).convert("LA")
-    write_outputs(image)
+    images = [(definition, load_image(definition)) for definition in IMAGES]
+    write_outputs(images)
 
 
 if __name__ == "__main__":

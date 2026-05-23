@@ -9,6 +9,7 @@
 // THE SOFTWARE IS PROVIDED AS IS, WITHOUT WARRANTY OF ANY KIND.
 
 #include "SteedPilot/App.h"
+#include "SteedPilot/ImageAssets.h"
 
 #include <cmath>
 #include <cstdio>
@@ -84,7 +85,8 @@ void drawManeuverProgressArc(Display& display, const NavState& state) {
     const int maneuver = clampProgress(state.maneuverProgressRemaining);
 
     if (maneuver >= 0) {
-        const float sweep = ProgressSweepDegrees * (float)maneuver / 100.0f;
+        const int complete = 100 - maneuver;
+        const float sweep = ProgressSweepDegrees * (float)complete / 100.0f;
         const int arcRadius = radius - 30;
         display.arc(cx, cy, arcRadius, ProgressStartDegrees, ProgressSweepDegrees, Color{8, 30, 32}, 7);
         display.arc(cx, cy, arcRadius, ProgressStartDegrees, sweep, Palette::Cyan, 7);
@@ -172,10 +174,6 @@ void drawContinueLane(Display& display, int cx, int cy, Color color) {
 
 void drawTurnLeft(Display& display, int cx, int cy, Color color) {
     const int thickness = 9;
-    const Color continuation{22, 46, 48};
-
-    display.line(cx, cy + 62, cx, cy - 58, continuation, 5);
-    drawArrowHead(display, cx, cy - 58, 0.0f, 20, continuation, 5);
 
     display.line(cx, cy + 62, cx, cy - 8, color, thickness);
     display.line(cx, cy - 8, cx - 66, cy - 8, color, thickness);
@@ -195,6 +193,20 @@ void drawBendLeft(Display& display, int cx, int cy, Color color) {
     display.line(entryX, entryY + 60, entryX, entryY, color, 9);
     display.arc(arcCx, arcCy, radius, 0.0f, 90.0f, color, 9);
     drawArrowHead(display, tipX, tipY, -90.0f, 28, color, 9);
+}
+
+void drawExitLeft(Display& display, int cx, int cy, Color color) {
+    const Color continuation{18, 38, 40};
+    display.line(cx + 30, cy + 52, cx + 30, cy - 62, continuation, 5);
+    drawArrowHead(display, cx + 30, cy - 62, 0.0f, 20, continuation, 5);
+    drawBendLeft(display, cx, cy + 16, color);
+}
+
+void drawExitRight(Display& display, int cx, int cy, Color color) {
+    const Color continuation{18, 38, 40};
+    display.line(cx - 30, cy + 52, cx - 30, cy - 62, continuation, 5);
+    drawArrowHead(display, cx - 30, cy - 62, 0.0f, 20, continuation, 5);
+    drawArrow(display, cx, cy - 4, 82, 28.0f, color);
 }
 
 void drawUTurn(Display& display, int cx, int cy, Color color) {
@@ -255,15 +267,17 @@ void drawRoundabout(Display& display, int cx, int cy, const NavState& state) {
 const char* maneuverLabel(Maneuver maneuver) {
     switch (maneuver) {
         case Maneuver::BendLeft: return "BEND IN";
+        case Maneuver::ExitLeft: return "EXIT LEFT IN";
         case Maneuver::SlightLeft: return "SLIGHT LEFT IN";
         case Maneuver::TurnLeft: return "LEFT IN";
         case Maneuver::SharpLeft: return "SHARP LEFT IN";
         case Maneuver::UTurn: return "U TURN IN";
+        case Maneuver::ExitRight: return "EXIT RIGHT IN";
         case Maneuver::SlightRight: return "SLIGHT RIGHT IN";
         case Maneuver::TurnRight: return "RIGHT IN";
         case Maneuver::SharpRight: return "SHARP RIGHT IN";
         case Maneuver::Roundabout: return "ROUNDABOUT IN";
-        case Maneuver::Arrive: return "ARRIVE IN";
+        case Maneuver::Arrive: return "ARRIVED";
         case Maneuver::Continue:
         default: return "CONTINUE FOR";
     }
@@ -281,10 +295,12 @@ void maneuverLabelText(const NavState& state, char* buffer, int bufferSize) {
 float maneuverAngle(Maneuver maneuver) {
     switch (maneuver) {
         case Maneuver::BendLeft: return -35.0f;
+        case Maneuver::ExitLeft: return -28.0f;
         case Maneuver::SlightLeft: return -28.0f;
         case Maneuver::TurnLeft: return -55.0f;
         case Maneuver::SharpLeft: return -90.0f;
         case Maneuver::UTurn: return 180.0f;
+        case Maneuver::ExitRight: return 28.0f;
         case Maneuver::SlightRight: return 28.0f;
         case Maneuver::TurnRight: return 55.0f;
         case Maneuver::SharpRight: return 90.0f;
@@ -305,6 +321,16 @@ void drawDistance(Display& display, FormattedDistance distance, Color color) {
 
     display.text(centerX(display), DistanceY, value, 5, color, TextAlign::Center);
     display.text(centerX(display), UnitY, distance.unit, 2, Palette::Muted, TextAlign::Center);
+}
+
+void fillRect(Display& display, int x, int y, int width, int height, Color color) {
+    for (int row = 0; row < height; ++row) {
+        display.line(x, y + row, x + width - 1, y + row, color, 1);
+    }
+}
+
+void drawFinishFlag(Display& display, int cx, int cy) {
+    display.image(cx - SteedPilotFinishFlag.width / 2, cy - SteedPilotFinishFlag.height / 2, SteedPilotFinishFlag);
 }
 
 } // namespace
@@ -348,8 +374,10 @@ void App::render(Display& display) {
 
 void App::renderNavigation(Display& display) {
     drawCircularShell(display);
-    drawTripProgressArc(display, _state);
-    drawManeuverProgressArc(display, _state);
+    if (_state.maneuver != Maneuver::Arrive) {
+        drawTripProgressArc(display, _state);
+        drawManeuverProgressArc(display, _state);
+    }
     drawSpeedWarning(display, _state);
     drawLinkStatus(display, _state);
 
@@ -365,17 +393,25 @@ void App::renderNavigation(Display& display) {
         display.text(cx, 38, exitLabel, 2, Palette::Muted, TextAlign::Center);
     } else if (_state.maneuver == Maneuver::BendLeft) {
         drawBendLeft(display, cx, cy - 44 + GraphicOffsetY, Palette::Cyan);
+    } else if (_state.maneuver == Maneuver::ExitLeft) {
+        drawExitLeft(display, cx, cy - 44 + GraphicOffsetY, Palette::Cyan);
+    } else if (_state.maneuver == Maneuver::ExitRight) {
+        drawExitRight(display, cx, cy - 44 + GraphicOffsetY, Palette::Cyan);
     } else if (_state.maneuver == Maneuver::TurnLeft) {
         drawTurnLeft(display, cx, cy - 36 + GraphicOffsetY, Palette::Cyan);
     } else if (_state.maneuver == Maneuver::UTurn) {
         drawUTurn(display, cx, cy - 52 + GraphicOffsetY, Palette::Cyan);
     } else if (_state.maneuver == Maneuver::Continue) {
         drawContinueLane(display, cx, cy - 34 + GraphicOffsetY, Palette::Cyan);
+    } else if (_state.maneuver == Maneuver::Arrive) {
+        drawFinishFlag(display, cx, cy);
     } else {
         drawArrow(display, cx, cy - 34 + GraphicOffsetY, 82, maneuverAngle(_state.maneuver), Palette::Cyan);
     }
-    drawDistance(display, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
-    display.text(cx, InstructionY, label, 2, Palette::Muted, TextAlign::Center);
+    if (_state.maneuver != Maneuver::Arrive) {
+        drawDistance(display, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
+        display.text(cx, InstructionY, label, 2, Palette::Muted, TextAlign::Center);
+    }
 }
 
 void App::renderDestination(Display& display) {

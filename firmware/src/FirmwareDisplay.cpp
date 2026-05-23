@@ -382,6 +382,17 @@ void FirmwareDisplay::putPixel(int x, int y, uint16_t color) {
     }
 }
 
+void FirmwareDisplay::image(int x, int y, const SteedPilotGrayAlphaImage& image, uint8_t opacity) {
+    for (int row = 0; row < image.height; ++row) {
+        for (int column = 0; column < image.width; ++column) {
+            const uint8_t* pixel = image.pixels + (row * image.width + column) * 2;
+            const uint8_t gray = pixel[0];
+            const uint8_t alpha = (uint8_t)((pixel[1] * opacity) / 255);
+            blendPixel(x + column, y + row, gray, gray, gray, alpha);
+        }
+    }
+}
+
 void FirmwareDisplay::blendPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t alpha) {
     if (x < 0 || x >= LcdWidth || y < 0 || y >= LcdHeight || alpha == 0) {
         return;
@@ -424,14 +435,7 @@ void FirmwareDisplay::imageCentered(uint8_t opacity) {
     const int left = (LcdWidth - image.width) / 2;
     const int top = (LcdHeight - image.height) / 2 + 20;
 
-    for (int y = 0; y < image.height; ++y) {
-        for (int x = 0; x < image.width; ++x) {
-            const uint8_t* pixel = image.pixels + (y * image.width + x) * 2;
-            const uint8_t gray = pixel[0];
-            const uint8_t alpha = (uint8_t)((pixel[1] * opacity) / 255);
-            blendPixel(left + x, top + y, gray, gray, gray, alpha);
-        }
-    }
+    this->image(left, top, image, opacity);
 }
 
 const SteedPilotGlyph* FirmwareDisplay::glyphFor(char value, int size) const {

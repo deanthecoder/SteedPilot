@@ -9,12 +9,15 @@
 // THE SOFTWARE IS PROVIDED AS IS, WITHOUT WARRANTY OF ANY KIND.
 
 import CoreLocation
+import Foundation
 import MapKit
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @StateObject private var sender = BluetoothNavSender()
     @StateObject private var locationProvider = LocationProvider()
+    @StateObject private var keyboard = KeyboardObserver()
     @State private var routeActive = false
     @State private var destination = "Princes Risborough"
     @State private var searchText = ""
@@ -29,6 +32,7 @@ struct ContentView: View {
     @State private var pendingLocationRecenter = false
     @State private var selectedRideMode = RideMode.directions
     @State private var smoothedDestinationBearing: Double?
+    @State private var debugRideDistanceMeters: CLLocationDistance?
     @State private var waypoints: [RouteWaypoint] = []
     @State private var routeLegs: [RouteLeg] = []
     @State private var isCalculatingRoute = false
@@ -36,14 +40,19 @@ struct ContentView: View {
     @State private var showingSaveRouteDialog = false
     @State private var showingRouteLibrary = false
     @State private var showingSettings = false
+    @State private var showingMapKitDebug = false
+    @State private var navigationDebugLog: [String] = []
     @State private var saveRouteName = ""
     @State private var savedRoutes: [SavedRoute] = []
     @AppStorage("SteedPilot.distanceUnitPreference") private var distanceUnitPreferenceRaw = DistanceUnitPreference.miles.rawValue
     @AppStorage("SteedPilot.avoidMotorways") private var avoidMotorways = false
     @AppStorage("SteedPilot.mapStyle") private var selectedMapStyleRaw = MapStyleOption.standard.rawValue
+    @AppStorage("SteedPilot.speedWarningLimitMph") private var speedWarningLimitMph = 65
+    @AppStorage("SteedPilot.showRideTestControls") private var showRideTestControls = false
     @FocusState private var searchFocused: Bool
 
     private let fixtures = NavFixtures.loadFixtures()
+    private let navigationDebugLogFileName = "SteedPilotNavigation.log"
     private let replayRoute = NavFixtures.loadReplayRoute()
     private let rideUpdateTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
@@ -90,7 +99,29 @@ struct ContentView: View {
             .onReceive(rideUpdateTimer) { _ in
                 sendRideUpdate()
             }
-            .onAppear(perform: loadSavedRoutes)
+            .onChange(of: sender.isConnected) { _, isConnected in
+                guard isConnected else {
+                    return
+                }
+
+                sendRideUpdate()
+            }
+            .onChange(of: routeActive) { _, isActive in
+                UIApplication.shared.isIdleTimerDisabled = isActive
+            }
+            .onChange(of: searchFocused) { _, isFocused in
+                guard isFocused else {
+                    return
+                }
+
+                withAnimation(.snappy(duration: 0.22)) {
+                    panelState = .expanded
+                }
+            }
+            .onAppear(perform: configureView)
+            .onDisappear {
+                UIApplication.shared.isIdleTimerDisabled = false
+            }
             .alert("Save route", isPresented: $showingSaveRouteDialog) {
                 TextField("Route name", text: $saveRouteName)
                     .textInputAutocapitalization(.words)
@@ -108,6 +139,16 @@ struct ContentView: View {
             .sheet(isPresented: $showingSettings) {
                 settingsSheet
             }
+            .sheet(isPresented: $showingMapKitDebug) {
+                MapKitDebugSheet(
+                    legs: routeLegs,
+                    snapshot: rideNavigationSnapshot(),
+                    navigationDebugLog: navigationDebugLog,
+                    clearNavigationDebugLog: clearNavigationDebugLog,
+                    distanceFormatter: formatDistance,
+                    travelTimeFormatter: formatTravelTime
+                )
+            }
         }
     }
 
@@ -117,6 +158,12 @@ struct ContentView: View {
                 ForEach(routeLegs) { leg in
                     MapPolyline(leg.polyline)
                         .stroke(routeLineColor, style: StrokeStyle(lineWidth: routeLineWidth, lineCap: .round, lineJoin: .round))
+                }
+
+                if let debugMapCoordinate {
+                    Annotation("Test position", coordinate: debugMapCoordinate) {
+                        DebugRidePositionPin()
+                    }
                 }
 
                 if let selectedTarget {
@@ -207,7 +254,9 @@ struct ContentView: View {
     }
 
     private func routeBuilderSheet(screenHeight: CGFloat, bottomInset: CGFloat) -> some View {
-        VStack(spacing: 0) {
+        let keyboardLift = searchFocused ? max(0, keyboard.height - bottomInset) : 0
+
+        return VStack(spacing: 0) {
             Button(action: togglePanel) {
                 VStack(spacing: 8) {
                     Capsule()
@@ -262,7 +311,9 @@ struct ContentView: View {
                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.36), radius: 18, y: -6)
+        .padding(.bottom, keyboardLift)
         .animation(.snappy(duration: 0.22), value: panelState)
+        .animation(.snappy(duration: 0.22), value: keyboardLift)
         .ignoresSafeArea(edges: .bottom)
     }
 
@@ -433,26 +484,32 @@ struct ContentView: View {
         VStack {
             Spacer()
 
-            HStack(spacing: 12) {
-                Image(systemName: selectedRideMode.icon)
-                    .font(.headline)
-                    .foregroundStyle(.cyan)
-                    .frame(width: 24)
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    Image(systemName: selectedRideMode.icon)
+                        .font(.headline)
+                        .foregroundStyle(.cyan)
+                        .frame(width: 24)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(selectedRideMode.activeTitle)
-                        .font(.subheadline.weight(.semibold))
-                    Text("SteedPilot \(sender.status.lowercased())")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(selectedRideMode.activeTitle)
+                            .font(.subheadline.weight(.semibold))
+                        Text("SteedPilot \(sender.status.lowercased())")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button(action: endRoute) {
+                        Text("End")
+                    }
+                    .buttonStyle(SecondaryRouteButtonStyle())
                 }
 
-                Spacer()
-
-                Button(action: endRoute) {
-                    Text("End")
+                if showRideTestControls {
+                    debugRideControls
                 }
-                .buttonStyle(SecondaryRouteButtonStyle())
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 14)
@@ -466,6 +523,75 @@ struct ContentView: View {
             .padding(.horizontal, 14)
             .padding(.bottom, routeBuilderVisibleHeight(for: screenHeight, bottomInset: bottomInset) + 10)
         }
+    }
+
+    private var debugRideControls: some View {
+        let totalDistance = totalRouteDistance
+        let activeDistance = debugRideDistanceMeters ?? 0
+
+        return VStack(spacing: 8) {
+            HStack {
+                Label("Test ride", systemImage: "speedometer")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Text(debugRideDistanceMeters.map { "\(formatDistance($0)) / \(formatDistance(totalDistance))" } ?? "Live GPS")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                Button(action: showMapKitDebug) {
+                    Label("MapKit", systemImage: "map")
+                        .labelStyle(.titleAndIcon)
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.cyan)
+                .disabled(routeLegs.isEmpty)
+            }
+
+            HStack(spacing: 8) {
+                Button(action: resetDebugRideProgress) {
+                    Image(systemName: "location")
+                        .frame(maxWidth: .infinity)
+                }
+                .accessibilityLabel("Use live GPS")
+
+                Button {
+                    stepDebugRide(by: -50)
+                } label: {
+                    Image(systemName: "minus")
+                        .frame(maxWidth: .infinity)
+                }
+                .accessibilityLabel("Step back")
+
+                Button {
+                    stepDebugRide(by: 50)
+                } label: {
+                    Text("+50 m")
+                        .frame(maxWidth: .infinity)
+                }
+
+                Button(action: jumpDebugRideToNextInstruction) {
+                    Image(systemName: "forward.end")
+                        .frame(maxWidth: .infinity)
+                }
+                .accessibilityLabel("Jump to next instruction")
+            }
+            .buttonStyle(DebugRideButtonStyle())
+            .disabled(totalDistance <= 0)
+
+            ProgressView(value: totalDistance > 0 ? activeDistance / totalDistance : 0)
+                .tint(.cyan)
+        }
+    }
+
+    private var debugMapCoordinate: CLLocationCoordinate2D? {
+        guard let debugRideDistanceMeters else {
+            return nil
+        }
+
+        return simulatedRouteProgress(at: debugRideDistanceMeters)?.coordinate
     }
 
     private var waypointEditList: some View {
@@ -555,6 +681,8 @@ struct ContentView: View {
                                 Spacer()
                             }
                             .padding(.vertical, 4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .listRowBackground(Color.white.opacity(0.04))
@@ -599,6 +727,17 @@ struct ContentView: View {
                     Toggle("Avoid motorways", isOn: $avoidMotorways)
                 }
 
+                Section("Speed warning") {
+                    Stepper(value: $speedWarningLimitMph, in: 20...100, step: 5) {
+                        HStack {
+                            Text("Warn above")
+                            Spacer()
+                            Text("\(speedWarningLimitMph) mph")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Section("Map") {
                     Picker("Style", selection: selectedMapStyleBinding) {
                         ForEach(MapStyleOption.allCases) { option in
@@ -606,6 +745,10 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                }
+
+                Section("Testing") {
+                    Toggle("Show ride test controls", isOn: $showRideTestControls)
                 }
             }
             .navigationTitle("Settings")
@@ -789,7 +932,7 @@ struct ContentView: View {
     }
 
     private var connectionColor: Color {
-        sender.status == "Connected" || sender.status == "Sent" ? .green : .red
+        sender.isConnected ? .green : .red
     }
 
     private var routeLineColor: Color {
@@ -849,18 +992,7 @@ struct ContentView: View {
         }
 
         let seconds = routeLegs.reduce(0) { $0 + $1.expectedTravelTime }
-        guard seconds > 0 else {
-            return "N/A"
-        }
-
-        let minutes = Int((seconds / 60).rounded())
-        if minutes < 60 {
-            return "\(minutes)m"
-        }
-
-        let hours = minutes / 60
-        let remainingMinutes = minutes % 60
-        return remainingMinutes == 0 ? "\(hours)h" : "\(hours)h \(remainingMinutes)m"
+        return formatTravelTime(seconds)
     }
 
     private func legDistanceText(to waypoint: RouteWaypoint) -> String? {
@@ -888,6 +1020,21 @@ struct ContentView: View {
         }
 
         return "\(pointText) - \(formatDistance(distance))"
+    }
+
+    private func formatTravelTime(_ seconds: TimeInterval) -> String {
+        guard seconds > 0 else {
+            return "N/A"
+        }
+
+        let minutes = Int((seconds / 60).rounded())
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        return remainingMinutes == 0 ? "\(hours)h" : "\(hours)h \(remainingMinutes)m"
     }
 
     private func estimatedRouteDistance(for coordinates: [CLLocationCoordinate2D]) -> CLLocationDistance {
@@ -962,17 +1109,25 @@ struct ContentView: View {
         }
 
         smoothedDestinationBearing = nil
+        debugRideDistanceMeters = nil
         locationProvider.startRideTracking()
         sender.send(payload)
         routeActive = true
+        UIApplication.shared.isIdleTimerDisabled = true
         panelState = .collapsed
+    }
+
+    private func configureView() {
+        loadSavedRoutes()
     }
 
     private func endRoute() {
         sender.send(NavFixtures.clearRoute)
         locationProvider.stopRideTracking()
         smoothedDestinationBearing = nil
+        debugRideDistanceMeters = nil
         routeActive = false
+        UIApplication.shared.isIdleTimerDisabled = false
         panelState = .medium
     }
 
@@ -989,6 +1144,50 @@ struct ContentView: View {
         sender.send(payload)
     }
 
+    private var totalRouteDistance: CLLocationDistance {
+        routeLegs.reduce(0) { $0 + $1.distance }
+    }
+
+    private func stepDebugRide(by meters: CLLocationDistance) {
+        let startingDistance = debugRideDistanceMeters ?? 0
+        setDebugRideDistance(startingDistance + meters)
+    }
+
+    private func jumpDebugRideToNextInstruction() {
+        let startingDistance = debugRideDistanceMeters ?? 0
+        var totalBeforeLeg: CLLocationDistance = 0
+
+        for leg in routeLegs {
+            if let instruction = leg.instructions.first(where: { $0.maneuver.isMeaningfulDirection && totalBeforeLeg + $0.distanceFromLegStart > startingDistance + 20 }) {
+                setDebugRideDistance(totalBeforeLeg + instruction.distanceFromLegStart)
+                return
+            }
+
+            totalBeforeLeg += leg.distance
+        }
+
+        setDebugRideDistance(totalRouteDistance)
+    }
+
+    private func resetDebugRideProgress() {
+        debugRideDistanceMeters = nil
+        sendRideUpdate()
+    }
+
+    private func setDebugRideDistance(_ distance: CLLocationDistance) {
+        debugRideDistanceMeters = max(0, min(totalRouteDistance, distance))
+        sendRideUpdate()
+    }
+
+    private func nearestCurrentRouteDistance() -> CLLocationDistance? {
+        guard let currentCoordinate = locationProvider.currentCoordinate,
+              let routeProgress = nearestRouteProgress(to: currentCoordinate) else {
+            return nil
+        }
+
+        return routeProgress.distanceFromRouteStart
+    }
+
     private func rideStartPayload() -> Data? {
         switch selectedRideMode {
             case .directions:
@@ -1000,19 +1199,36 @@ struct ContentView: View {
 
     private func directionsRideStartPayload() -> Data? {
         let snapshot = rideNavigationSnapshot()
+        appendNavigationDebugLog(snapshot: snapshot, mode: "navigation")
 
-        return makeNavStatePayload([
+        var fields: [String: Any] = [
             "mode": "navigation",
-            "maneuver": "continue",
+            "maneuver": snapshot.maneuver.rawValue,
             "distanceToManeuverMeters": snapshot.distanceToManeuverMeters,
             "distanceToDestinationMeters": snapshot.distanceToDestinationMeters,
             "maneuverProgressRemaining": snapshot.maneuverProgressRemaining,
             "tripProgressComplete": snapshot.tripProgressComplete
-        ])
+        ]
+
+        if let roundaboutExit = snapshot.roundaboutExit {
+            fields["exit"] = roundaboutExit
+        }
+        if !snapshot.roundaboutExitAngles.isEmpty {
+            fields["exitCount"] = snapshot.roundaboutExitAngles.count
+            fields["exits"] = snapshot.roundaboutExitAngles.map { angle in
+                [
+                    "index": angle.index,
+                    "angleDegrees": angle.angleDegrees
+                ]
+            }
+        }
+
+        return makeNavStatePayload(fields)
     }
 
     private func headingRideStartPayload() -> Data? {
         let snapshot = rideNavigationSnapshot()
+        appendNavigationDebugLog(snapshot: snapshot, mode: "destination")
 
         return makeNavStatePayload([
             "mode": "destination",
@@ -1022,8 +1238,70 @@ struct ContentView: View {
         ])
     }
 
+    private func appendNavigationDebugLog(snapshot: RideNavigationSnapshot, mode: String) {
+        let selectedOffset = snapshot.selectedInstructionOffsetMeters.map(formatDebugDistance) ?? "none"
+        let entry = [
+            Date.now.formatted(date: .omitted, time: .standard),
+            "mode=\(mode)",
+            "send=\(snapshot.maneuver.debugTitle)",
+            "toManeuver=\(formatDebugDistance(CLLocationDistance(snapshot.distanceToManeuverMeters)))",
+            "toDest=\(formatDebugDistance(CLLocationDistance(snapshot.distanceToDestinationMeters)))",
+            "routeProgress=\(formatDebugDistance(snapshot.routeProgressMeters))",
+            "selectedOffset=\(selectedOffset)",
+            "selectedEnd=\(snapshot.selectedInstructionEndMeters.map(formatDebugDistance) ?? "none")",
+            "selected='\(snapshot.selectedInstructionText)'",
+            "decision='\(snapshot.selectionReason)'"
+        ].joined(separator: " | ")
+
+        navigationDebugLog.append(entry)
+        if navigationDebugLog.count > 80 {
+            navigationDebugLog.removeFirst(navigationDebugLog.count - 80)
+        }
+
+        writeNavigationDebugLogEntry(entry)
+        NSLog("SteedPilotNav %@", entry)
+    }
+
+    private func clearNavigationDebugLog() {
+        navigationDebugLog.removeAll()
+        guard let url = navigationDebugLogURL else {
+            return
+        }
+
+        try? "".write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private var navigationDebugLogURL: URL? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent(navigationDebugLogFileName)
+    }
+
+    private func writeNavigationDebugLogEntry(_ entry: String) {
+        guard
+            let url = navigationDebugLogURL,
+            let data = "\(entry)\n".data(using: .utf8)
+        else {
+            return
+        }
+
+        if FileManager.default.fileExists(atPath: url.path),
+           let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            handle.closeFile()
+            return
+        }
+
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private func formatDebugDistance(_ meters: CLLocationDistance) -> String {
+        "\(Int(meters.rounded()))m"
+    }
+
     private func rideNavigationSnapshot() -> RideNavigationSnapshot {
-        let totalDistance = routeLegs.reduce(0) { $0 + $1.distance }
+        let totalDistance = totalRouteDistance
         let fallbackDistance = Int(totalDistance.rounded())
         let fallbackManeuver = Int((routeLegs.first?.distance ?? CLLocationDistance(fallbackDistance)).rounded())
         let fallbackBearing = fallbackDestinationBearing()
@@ -1034,33 +1312,110 @@ struct ContentView: View {
                 distanceToManeuverMeters: max(fallbackManeuver, 0),
                 destinationBearingDegrees: fallbackBearing,
                 tripProgressComplete: 0,
-                maneuverProgressRemaining: 100
+                maneuverProgressRemaining: 100,
+                maneuver: .continueAhead,
+                roundaboutExit: nil,
+                roundaboutExitAngles: [],
+            selectedInstructionText: "No route",
+            selectedInstructionOffsetMeters: nil,
+            selectedInstructionEndMeters: nil,
+            routeProgressMeters: 0,
+            selectionReason: "No route distance"
             )
         }
 
+        let fallbackInstruction = nextInstructionFallback()
+        if let debugRideDistanceMeters,
+           let routeProgress = simulatedRouteProgress(at: debugRideDistanceMeters) {
+            return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress, currentCoordinate: nil)
+        }
+
         guard let currentCoordinate = locationProvider.currentCoordinate,
-              let routeProgress = nearestRouteProgress(to: currentCoordinate) else {
+              let routeProgress = nearestRouteProgress(to: currentCoordinate),
+              routeProgress.distanceToRoute <= 100 else {
             return RideNavigationSnapshot(
                 distanceToDestinationMeters: max(fallbackDistance, 0),
                 distanceToManeuverMeters: max(fallbackManeuver, 0),
                 destinationBearingDegrees: fallbackBearing,
                 tripProgressComplete: 0,
-                maneuverProgressRemaining: 100
+                maneuverProgressRemaining: 100,
+                maneuver: fallbackInstruction?.maneuver ?? .continueAhead,
+                roundaboutExit: fallbackInstruction?.roundaboutExit,
+                roundaboutExitAngles: fallbackInstruction?.roundaboutExitAngles ?? [],
+                selectedInstructionText: fallbackInstruction?.rawInstruction ?? "Fallback instruction",
+                selectedInstructionOffsetMeters: fallbackInstruction?.distanceFromLegStart,
+                selectedInstructionEndMeters: fallbackInstruction.map { $0.distanceFromLegStart + $0.distance },
+                routeProgressMeters: 0,
+                selectionReason: "No nearby GPS/debug position"
             )
         }
 
+        return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress, currentCoordinate: currentCoordinate)
+    }
+
+    private func rideNavigationSnapshot(totalDistance: CLLocationDistance, routeProgress: RouteProgress, currentCoordinate: CLLocationCoordinate2D?) -> RideNavigationSnapshot {
         let remainingDistance = max(totalDistance - routeProgress.distanceFromRouteStart, 0)
-        let remainingManeuver = max(routeProgress.legDistance - routeProgress.distanceFromLegStart, 0)
+        let instruction = nextInstruction(after: routeProgress)
+        let instructionIsActive = instruction.map {
+            routeProgress.distanceFromLegStart >= $0.distanceFromLegStart
+                && routeProgress.distanceFromLegStart <= $0.distanceFromLegStart + $0.distance
+        } ?? false
+        let remainingManeuver = instruction.map { instruction in
+            let targetDistance = instructionIsActive ? instruction.distanceFromLegStart + instruction.distance : instruction.distanceFromLegStart
+            return max(targetDistance - routeProgress.distanceFromLegStart, 0)
+        } ?? max(routeProgress.legDistance - routeProgress.distanceFromLegStart, 0)
+        let instructionDistance = instruction?.distance ?? max(routeProgress.legDistance - routeProgress.distanceFromLegStart, 1)
         let tripProgress = totalDistance > 0 ? Int(((routeProgress.distanceFromRouteStart / totalDistance) * 100).rounded()) : 0
-        let maneuverProgress = routeProgress.legDistance > 0 ? Int(((remainingManeuver / routeProgress.legDistance) * 100).rounded()) : 0
+        let maneuverProgress = instructionDistance > 0 ? Int(((remainingManeuver / instructionDistance) * 100).rounded()) : 0
+        let destinationBearing = currentCoordinate.map {
+            relativeDestinationBearing(from: $0, routeProgress: routeProgress)
+        } ?? relativeDestinationBearing(routeProgress: routeProgress)
+        let isArriving = remainingDistance <= 40 || (instruction?.maneuver == .arrive && remainingManeuver <= 40)
+        let continueThresholdMeters: CLLocationDistance = 200
+        let shouldContinue = !isArriving && !instructionIsActive && remainingManeuver > continueThresholdMeters
+        let maneuver = isArriving ? DeviceManeuver.arrive : (shouldContinue ? .continueAhead : (instruction?.maneuver ?? .continueAhead))
+        let selectionReason = isArriving ? "Arriving" : (shouldContinue ? "Synthetic continue: selected instruction is over \(Int(continueThresholdMeters))m away" : "Selected instruction")
 
         return RideNavigationSnapshot(
             distanceToDestinationMeters: Int(remainingDistance.rounded()),
-            distanceToManeuverMeters: Int(remainingManeuver.rounded()),
-            destinationBearingDegrees: relativeDestinationBearing(from: currentCoordinate, routeProgress: routeProgress),
+            distanceToManeuverMeters: Int((isArriving ? remainingDistance : remainingManeuver).rounded()),
+            destinationBearingDegrees: destinationBearing,
             tripProgressComplete: max(0, min(100, tripProgress)),
-            maneuverProgressRemaining: max(0, min(100, maneuverProgress))
+            maneuverProgressRemaining: max(0, min(100, maneuverProgress)),
+            maneuver: maneuver,
+            roundaboutExit: shouldContinue || isArriving ? nil : instruction?.roundaboutExit,
+            roundaboutExitAngles: shouldContinue || isArriving ? [] : (instruction?.roundaboutExitAngles ?? []),
+            selectedInstructionText: instruction?.rawInstruction ?? "No remaining instruction",
+            selectedInstructionOffsetMeters: instruction?.distanceFromLegStart,
+            selectedInstructionEndMeters: instruction.map { $0.distanceFromLegStart + $0.distance },
+            routeProgressMeters: routeProgress.distanceFromRouteStart,
+            selectionReason: selectionReason
         )
+    }
+
+    private func simulatedRouteProgress(at distance: CLLocationDistance) -> RouteProgress? {
+        var totalBeforeLeg: CLLocationDistance = 0
+
+        for leg in routeLegs {
+            let legEnd = totalBeforeLeg + leg.distance
+            if distance <= legEnd || leg.id == routeLegs.last?.id {
+                let distanceFromLegStart = max(0, min(leg.distance, distance - totalBeforeLeg))
+                let sample = leg.polyline.sample(at: leg.distance > 0 ? distanceFromLegStart / leg.distance : 0)
+                return RouteProgress(
+                    legID: leg.id,
+                    distanceToRoute: 0,
+                    distanceFromLegStart: distanceFromLegStart,
+                    distanceFromRouteStart: totalBeforeLeg + distanceFromLegStart,
+                    legDistance: leg.distance,
+                    routeBearingDegrees: Double(sample?.bearingDegrees ?? leg.polyline.approximateBearingDegrees ?? 0),
+                    coordinate: sample?.coordinate
+                )
+            }
+
+            totalBeforeLeg = legEnd
+        }
+
+        return nil
     }
 
     private func nearestRouteProgress(to coordinate: CLLocationCoordinate2D) -> RouteProgress? {
@@ -1076,11 +1431,13 @@ struct ContentView: View {
             let distanceFraction = legProgress.polylineLength > 0 ? legProgress.distanceFromStart / legProgress.polylineLength : 0
             let distanceFromLegStart = max(0, min(leg.distance, leg.distance * distanceFraction))
             let routeProgress = RouteProgress(
+                legID: leg.id,
                 distanceToRoute: legProgress.distanceToRoute,
                 distanceFromLegStart: distanceFromLegStart,
                 distanceFromRouteStart: totalBeforeLeg + distanceFromLegStart,
                 legDistance: leg.distance,
-                routeBearingDegrees: legProgress.routeBearingDegrees
+                routeBearingDegrees: legProgress.routeBearingDegrees,
+                coordinate: legProgress.coordinate
             )
 
             if nearestProgress == nil || routeProgress.distanceToRoute < nearestProgress!.distanceToRoute {
@@ -1091,6 +1448,33 @@ struct ContentView: View {
         }
 
         return nearestProgress
+    }
+
+    private func nextInstruction(after routeProgress: RouteProgress) -> RouteInstruction? {
+        guard let leg = routeLegs.first(where: { $0.id == routeProgress.legID }) else {
+            return nil
+        }
+
+        let lookbehindMeters: CLLocationDistance = 15
+        if let activeInstruction = leg.instructions.last(where: {
+            $0.maneuver.isMeaningfulDirection && $0.distanceFromLegStart <= routeProgress.distanceFromLegStart + lookbehindMeters
+        }) {
+            let activeInstructionEnd = activeInstruction.distanceFromLegStart + activeInstruction.distance
+            if routeProgress.distanceFromLegStart <= activeInstructionEnd + lookbehindMeters {
+                return activeInstruction
+            }
+        }
+
+        if let instruction = leg.instructions.first(where: { $0.maneuver.isMeaningfulDirection && $0.distanceFromLegStart >= routeProgress.distanceFromLegStart - lookbehindMeters }) {
+            return instruction
+        }
+
+        let nextLegStart = routeLegs.drop(while: { $0.id != routeProgress.legID }).dropFirst().first
+        return nextLegStart?.instructions.first { $0.maneuver.isMeaningfulDirection }
+    }
+
+    private func nextInstructionFallback() -> RouteInstruction? {
+        routeLegs.lazy.flatMap(\.instructions).first { $0.maneuver.isMeaningfulDirection }
     }
 
     private func fallbackDestinationBearing() -> Int {
@@ -1120,6 +1504,19 @@ struct ContentView: View {
         return Int(smoothedBearing.rounded()) % 360
     }
 
+    private func relativeDestinationBearing(routeProgress: RouteProgress) -> Int {
+        guard let coordinate = routeProgress.coordinate else {
+            return fallbackDestinationBearing()
+        }
+
+        let destinationBearing = Double(destinationBearing(from: coordinate))
+        let relativeBearing = normalizedBearing(destinationBearing - routeProgress.routeBearingDegrees)
+        let smoothedBearing = smoothedBearing(from: smoothedDestinationBearing, to: relativeBearing, alpha: 0.35)
+        smoothedDestinationBearing = smoothedBearing
+
+        return Int(smoothedBearing.rounded()) % 360
+    }
+
     private func normalizedBearing(_ degrees: Double) -> Double {
         let normalized = degrees.truncatingRemainder(dividingBy: 360)
         return normalized >= 0 ? normalized : normalized + 360
@@ -1138,7 +1535,8 @@ struct ContentView: View {
         var payload: [String: Any] = [
             "v": 1,
             "type": "state",
-            "link": "connected"
+            "link": "connected",
+            "speed": speedWarningPayload
         ]
 
         fields.forEach { key, value in
@@ -1146,6 +1544,23 @@ struct ContentView: View {
         }
 
         return try? JSONSerialization.data(withJSONObject: payload)
+    }
+
+    private var speedWarningPayload: [String: Any] {
+        [
+            "current": currentSpeedMph,
+            "limit": speedWarningLimitMph,
+            "unit": "mph"
+        ]
+    }
+
+    private var currentSpeedMph: Int {
+        guard let speedMetersPerSecond = locationProvider.currentSpeedMetersPerSecond,
+              speedMetersPerSecond > 0 else {
+            return 0
+        }
+
+        return Int((speedMetersPerSecond * 2.2369362921).rounded())
     }
 
     private func recenterMap() {
@@ -1384,7 +1799,9 @@ struct ContentView: View {
                     toWaypointID: end.id,
                     distance: route.distance,
                     expectedTravelTime: route.expectedTravelTime,
-                    polyline: route.polyline
+                    polyline: route.polyline,
+                    steps: route.steps,
+                    isFinalLeg: index == routePoints.count - 1
                 )
             )
         }
@@ -1414,6 +1831,10 @@ struct ContentView: View {
     private func clearSelectedTarget() {
         selectedTarget = nil
         searchMessage = nil
+    }
+
+    private func showMapKitDebug() {
+        showingMapKitDebug = true
     }
 
     private func clearPlannedRoute() {
@@ -1532,6 +1953,10 @@ struct ContentView: View {
     }
 
     private func showSaveRouteDialog() {
+        guard waypoints.count > 1 else {
+            return
+        }
+
         saveRouteName = defaultRouteSaveName
         showingSaveRouteDialog = true
     }
@@ -1744,6 +2169,22 @@ private struct WaypointPin: View {
     }
 }
 
+private struct DebugRidePositionPin: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.black.opacity(0.72))
+                .frame(width: 30, height: 30)
+                .overlay(Circle().stroke(Color.cyan, lineWidth: 2))
+
+            Image(systemName: "speedometer")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.cyan)
+        }
+        .shadow(color: .black.opacity(0.32), radius: 6, y: 3)
+    }
+}
+
 private struct TargetPin: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -1888,6 +2329,135 @@ private struct SavedRoutePoint: Codable {
     }
 }
 
+private struct MapKitDebugSheet: View {
+    let legs: [RouteLeg]
+    let snapshot: RideNavigationSnapshot
+    let navigationDebugLog: [String]
+    let clearNavigationDebugLog: () -> Void
+    let distanceFormatter: (CLLocationDistance) -> String
+    let travelTimeFormatter: (TimeInterval) -> String
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Route") {
+                    DebugValueRow(label: "Legs", value: "\(legs.count)")
+                    DebugValueRow(label: "Distance", value: distanceFormatter(legs.reduce(0) { $0 + $1.distance }))
+                    DebugValueRow(label: "Ride time", value: travelTimeFormatter(legs.reduce(0) { $0 + $1.expectedTravelTime }))
+                    DebugValueRow(label: "Instructions", value: "\(legs.reduce(0) { $0 + $1.instructions.count })")
+                    DebugValueRow(label: "Raw MapKit steps", value: "\(legs.reduce(0) { $0 + $1.debugSteps.count })")
+                }
+
+                Section("Device now") {
+                    DebugValueRow(label: "Maneuver", value: snapshot.maneuver.debugTitle)
+                    DebugValueRow(label: "To maneuver", value: distanceFormatter(CLLocationDistance(snapshot.distanceToManeuverMeters)))
+                    DebugValueRow(label: "To destination", value: distanceFormatter(CLLocationDistance(snapshot.distanceToDestinationMeters)))
+                    DebugValueRow(label: "Trip progress", value: "\(snapshot.tripProgressComplete)%")
+                    DebugValueRow(label: "Maneuver progress", value: "\(snapshot.maneuverProgressRemaining)%")
+                    DebugValueRow(label: "Roundabout exit", value: snapshot.roundaboutExit.map(String.init) ?? "none")
+                    DebugValueRow(label: "Roundabout angles", value: anglesText(snapshot.roundaboutExitAngles))
+                    DebugValueRow(label: "Route progress", value: distanceFormatter(snapshot.routeProgressMeters))
+                    DebugValueRow(label: "Selected offset", value: snapshot.selectedInstructionOffsetMeters.map(distanceFormatter) ?? "none")
+                    DebugValueRow(label: "Selected source", value: snapshot.selectedInstructionText)
+                    DebugValueRow(label: "Decision", value: snapshot.selectionReason)
+                }
+
+                Section {
+                    if navigationDebugLog.isEmpty {
+                        Text("No navigation packets logged yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(navigationDebugLog.suffix(30).enumerated()), id: \.offset) { _, entry in
+                            Text(entry)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .padding(.vertical, 3)
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Text("Navigation Log")
+                        Spacer()
+                        Button("Clear", action: clearNavigationDebugLog)
+                            .font(.caption.weight(.semibold))
+                    }
+                }
+
+                ForEach(Array(legs.enumerated()), id: \.element.id) { legIndex, leg in
+                    Section("Leg \(legIndex + 1)") {
+                        DebugValueRow(label: "Distance", value: distanceFormatter(leg.distance))
+                        DebugValueRow(label: "Ride time", value: travelTimeFormatter(leg.expectedTravelTime))
+
+                        ForEach(Array(leg.debugSteps.enumerated()), id: \.offset) { stepIndex, step in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text("\(stepIndex + 1). \(step.rawInstruction.isEmpty ? "(empty instruction)" : step.rawInstruction)")
+                                        .font(.subheadline.weight(.semibold))
+                                    Spacer()
+                                    Text(distanceFormatter(step.distance))
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if let notice = step.rawNotice, !notice.isEmpty {
+                                    DebugValueRow(label: "Notice", value: notice)
+                                }
+
+                                DebugValueRow(label: "MapKit text ->", value: step.sourceManeuver.debugTitle)
+                                DebugValueRow(label: "Device sends", value: step.deviceManeuver?.debugTitle ?? "skipped")
+                                DebugValueRow(label: "Pipeline", value: step.skipReason ?? "kept")
+                                DebugValueRow(label: "Leg offset", value: distanceFormatter(step.distanceFromLegStart))
+                                DebugValueRow(label: "Bearings", value: bearingText(step))
+
+                                if step.sourceManeuver == .roundabout || step.mapKitRoundaboutExit != nil {
+                                    DebugValueRow(label: "Raw exit guess", value: step.mapKitRoundaboutExit.map(String.init) ?? "none")
+                                    DebugValueRow(label: "Raw exit angles", value: anglesText(step.mapKitRoundaboutExitAngles))
+                                    DebugValueRow(label: "Sent exit", value: step.deviceRoundaboutExit.map(String.init) ?? "none")
+                                    DebugValueRow(label: "Sent exit angles", value: anglesText(step.deviceRoundaboutExitAngles))
+                                }
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("MapKit Debug")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func bearingText(_ step: RouteDebugStep) -> String {
+        let incoming = step.incomingBearing.map { "\($0) deg" } ?? "none"
+        let outgoing = step.outgoingBearing.map { "\($0) deg" } ?? "none"
+        return "\(incoming) -> \(outgoing)"
+    }
+
+    private func anglesText(_ angles: [RoundaboutExitAngle]) -> String {
+        guard !angles.isEmpty else {
+            return "none"
+        }
+
+        return angles.map { "\($0.index): \($0.angleDegrees) deg" }.joined(separator: ", ")
+    }
+}
+
+private struct DebugValueRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Text(value)
+                .multilineTextAlignment(.trailing)
+        }
+        .font(.caption)
+    }
+}
+
 private struct RouteLeg: Identifiable {
     let id = UUID()
     let fromWaypointID: UUID
@@ -1895,6 +2465,74 @@ private struct RouteLeg: Identifiable {
     let distance: CLLocationDistance
     let expectedTravelTime: TimeInterval
     let polyline: MKPolyline
+    let instructions: [RouteInstruction]
+    let debugSteps: [RouteDebugStep]
+
+    init(fromWaypointID: UUID, toWaypointID: UUID, distance: CLLocationDistance, expectedTravelTime: TimeInterval, polyline: MKPolyline, steps: [MKRoute.Step], isFinalLeg: Bool) {
+        self.fromWaypointID = fromWaypointID
+        self.toWaypointID = toWaypointID
+        self.distance = distance
+        self.expectedTravelTime = expectedTravelTime
+        self.polyline = polyline
+
+        var distanceFromLegStart: CLLocationDistance = 0
+        let debugSteps = steps.enumerated().map { index, step in
+            let roundaboutExit = RouteInstruction.roundaboutExit(from: step.instructions)
+            let maneuverDistance = distanceFromLegStart
+            let incomingBearing = roundaboutExit == nil ? (index > 0 ? steps[index - 1].polyline.lastSegmentBearingDegrees : nil) : polyline.bearing(atDistance: maneuverDistance - 50)
+            let outgoingBearing = roundaboutExit == nil ? step.polyline.lastSegmentBearingDegrees : polyline.bearing(atDistance: maneuverDistance + 50)
+            let sourceManeuver = DeviceManeuver(instruction: step.instructions)
+            let inferredManeuver = RouteInstruction.inferredManeuver(
+                sourceManeuver,
+                instruction: step.instructions,
+                incomingBearing: incomingBearing,
+                outgoingBearing: outgoingBearing
+            )
+            let roundaboutAngles = RouteInstruction.roundaboutExitAngles(
+                exit: roundaboutExit,
+                incomingBearing: incomingBearing,
+                outgoingBearing: outgoingBearing
+            )
+            let deviceManeuver = RouteInstruction.normalizedManeuver(
+                inferredManeuver,
+                roundaboutExit: roundaboutExit,
+                roundaboutExitAngles: roundaboutAngles,
+                incomingBearing: incomingBearing,
+                outgoingBearing: outgoingBearing
+            )
+            let skipReason: String?
+            if step.distance <= 1 {
+                skipReason = "distance <= 1m"
+            } else if !isFinalLeg && sourceManeuver == .arrive {
+                skipReason = "intermediate leg arrival"
+            } else if sourceManeuver == .continueAhead && step.instructions.isEmpty {
+                skipReason = "empty continue"
+            } else {
+                skipReason = nil
+            }
+
+            let debugStep = RouteDebugStep(
+                distanceFromLegStart: distanceFromLegStart,
+                distance: step.distance,
+                rawInstruction: step.instructions,
+                rawNotice: step.notice,
+                sourceManeuver: sourceManeuver,
+                deviceManeuver: skipReason == nil ? deviceManeuver : nil,
+                incomingBearing: incomingBearing,
+                outgoingBearing: outgoingBearing,
+                mapKitRoundaboutExit: roundaboutExit,
+                mapKitRoundaboutExitAngles: roundaboutAngles,
+                deviceRoundaboutExit: skipReason == nil && deviceManeuver == .roundabout ? roundaboutExit : nil,
+                deviceRoundaboutExitAngles: skipReason == nil && deviceManeuver == .roundabout ? roundaboutAngles : [],
+                skipReason: skipReason
+            )
+
+            distanceFromLegStart += step.distance
+            return debugStep
+        }
+        self.debugSteps = debugSteps
+        self.instructions = debugSteps.compactMap(RouteInstruction.init)
+    }
 }
 
 private struct RideNavigationSnapshot {
@@ -1903,14 +2541,24 @@ private struct RideNavigationSnapshot {
     let destinationBearingDegrees: Int
     let tripProgressComplete: Int
     let maneuverProgressRemaining: Int
+    let maneuver: DeviceManeuver
+    let roundaboutExit: Int?
+    let roundaboutExitAngles: [RoundaboutExitAngle]
+    let selectedInstructionText: String
+    let selectedInstructionOffsetMeters: CLLocationDistance?
+    let selectedInstructionEndMeters: CLLocationDistance?
+    let routeProgressMeters: CLLocationDistance
+    let selectionReason: String
 }
 
 private struct RouteProgress {
+    let legID: UUID
     let distanceToRoute: CLLocationDistance
     let distanceFromLegStart: CLLocationDistance
     let distanceFromRouteStart: CLLocationDistance
     let legDistance: CLLocationDistance
     let routeBearingDegrees: Double
+    let coordinate: CLLocationCoordinate2D?
 }
 
 private struct PolylineProgress {
@@ -1918,6 +2566,304 @@ private struct PolylineProgress {
     let distanceFromStart: CLLocationDistance
     let polylineLength: CLLocationDistance
     let routeBearingDegrees: Double
+    let coordinate: CLLocationCoordinate2D
+}
+
+private struct PolylineRouteSample {
+    let coordinate: CLLocationCoordinate2D
+    let bearingDegrees: Int
+}
+
+private struct RouteDebugStep {
+    let distanceFromLegStart: CLLocationDistance
+    let distance: CLLocationDistance
+    let rawInstruction: String
+    let rawNotice: String?
+    let sourceManeuver: DeviceManeuver
+    let deviceManeuver: DeviceManeuver?
+    let incomingBearing: Int?
+    let outgoingBearing: Int?
+    let mapKitRoundaboutExit: Int?
+    let mapKitRoundaboutExitAngles: [RoundaboutExitAngle]
+    let deviceRoundaboutExit: Int?
+    let deviceRoundaboutExitAngles: [RoundaboutExitAngle]
+    let skipReason: String?
+}
+
+private struct RouteInstruction {
+    let distanceFromLegStart: CLLocationDistance
+    let distance: CLLocationDistance
+    let rawInstruction: String
+    let rawNotice: String?
+    let sourceManeuver: DeviceManeuver
+    let maneuver: DeviceManeuver
+    let incomingBearing: Int?
+    let outgoingBearing: Int?
+    let roundaboutExit: Int?
+    let roundaboutExitAngles: [RoundaboutExitAngle]
+    let mapKitRoundaboutExit: Int?
+    let mapKitRoundaboutExitAngles: [RoundaboutExitAngle]
+
+    init?(_ debugStep: RouteDebugStep) {
+        guard let maneuver = debugStep.deviceManeuver,
+              debugStep.skipReason == nil else {
+            return nil
+        }
+
+        self.distanceFromLegStart = debugStep.distanceFromLegStart
+        self.distance = debugStep.distance
+        self.rawInstruction = debugStep.rawInstruction
+        self.rawNotice = debugStep.rawNotice
+        self.sourceManeuver = debugStep.sourceManeuver
+        self.maneuver = maneuver
+        self.incomingBearing = debugStep.incomingBearing
+        self.outgoingBearing = debugStep.outgoingBearing
+        self.roundaboutExit = debugStep.deviceRoundaboutExit
+        self.roundaboutExitAngles = debugStep.deviceRoundaboutExitAngles
+        self.mapKitRoundaboutExit = debugStep.mapKitRoundaboutExit
+        self.mapKitRoundaboutExitAngles = debugStep.mapKitRoundaboutExitAngles
+    }
+
+    static func roundaboutExit(from instruction: String) -> Int? {
+        let lowercased = instruction.lowercased()
+        guard lowercased.contains("roundabout") else {
+            return nil
+        }
+
+        let words = lowercased
+            .replacingOccurrences(of: ",", with: " ")
+            .replacingOccurrences(of: ".", with: " ")
+            .split(separator: " ")
+
+        for word in words {
+            if let exit = Int(word) {
+                return exit
+            }
+
+            switch word {
+                case "first", "1st": return 1
+                case "second", "2nd": return 2
+                case "third", "3rd": return 3
+                case "fourth", "4th": return 4
+                case "fifth", "5th": return 5
+                case "sixth", "6th": return 6
+                default: break
+            }
+        }
+
+        return nil
+    }
+
+    static func inferredManeuver(_ maneuver: DeviceManeuver, instruction: String, incomingBearing: Int?, outgoingBearing: Int?) -> DeviceManeuver {
+        guard (maneuver == .continueAhead || maneuver == .exitLeft),
+              instruction.lowercased().contains("take the exit") || instruction.lowercased().contains("take exit") else {
+            return maneuver
+        }
+
+        guard let angle = relativeAngle(incomingBearing: incomingBearing, outgoingBearing: outgoingBearing) else {
+            return .exitLeft
+        }
+
+        if angle < -100 {
+            return .exitLeft
+        }
+        if angle < -25 {
+            return .exitLeft
+        }
+        if angle > 100 {
+            return .exitRight
+        }
+        if angle > 25 {
+            return .exitRight
+        }
+
+        return .continueAhead
+    }
+
+    static func roundaboutExitAngles(exit: Int?, incomingBearing: Int?, outgoingBearing: Int?) -> [RoundaboutExitAngle] {
+        guard let exit else {
+            return []
+        }
+
+        let targetAngle = relativeExitAngle(exit: exit, incomingBearing: incomingBearing, outgoingBearing: outgoingBearing)
+        let target = normalizedRoundaboutTargetAngle(targetAngle, exit: exit)
+        let entryAngle = 180
+        var sweep = normalizePositiveDegrees(target) - entryAngle
+        if sweep <= 0 {
+            sweep += 360
+        }
+        if exit > 1 && sweep < exit * 45 {
+            sweep += 360
+        }
+
+        return (0..<exit).map { index in
+            let ratio = Double(index + 1) / Double(exit)
+            let angle = normalizedSignedAngle(Int((Double(entryAngle) + (Double(sweep) * ratio)).rounded()))
+            return RoundaboutExitAngle(index: index + 1, angleDegrees: angle)
+        }
+    }
+
+    private static func normalizedRoundaboutTargetAngle(_ targetAngle: Int?, exit: Int) -> Int {
+        let fallback = fallbackExitAngle(for: exit)
+        guard let targetAngle else {
+            return fallback
+        }
+
+        if exit >= 3 && abs(targetAngle) < 35 {
+            return fallback
+        }
+
+        return clamp(targetAngle, min: -150, max: 150)
+    }
+
+    private static func normalizePositiveDegrees(_ degrees: Int) -> Int {
+        var angle = degrees
+        while angle < 0 {
+            angle += 360
+        }
+        while angle >= 360 {
+            angle -= 360
+        }
+
+        return angle
+    }
+
+    private static func normalizedSignedAngle(_ degrees: Int) -> Int {
+        var angle = degrees
+        while angle > 180 {
+            angle -= 360
+        }
+        while angle < -180 {
+            angle += 360
+        }
+
+        return angle
+    }
+
+    static func normalizedManeuver(_ maneuver: DeviceManeuver, roundaboutExit: Int?, roundaboutExitAngles: [RoundaboutExitAngle], incomingBearing: Int?, outgoingBearing: Int?) -> DeviceManeuver {
+        guard maneuver == .roundabout,
+              roundaboutExit == 1 else {
+            return maneuver
+        }
+
+        if roundaboutExitAngles.first?.angleDegrees ?? 0 < -110 {
+            return .turnLeft
+        }
+
+        return maneuver
+    }
+
+    private static func relativeExitAngle(exit: Int, incomingBearing: Int?, outgoingBearing: Int?) -> Int? {
+        guard let angle = relativeAngle(incomingBearing: incomingBearing, outgoingBearing: outgoingBearing) else {
+            return nil
+        }
+
+        if exit == 1 && abs(angle) <= 120 {
+            return 0
+        }
+
+        return angle
+    }
+
+    private static func relativeAngle(incomingBearing: Int?, outgoingBearing: Int?) -> Int? {
+        guard let incomingBearing,
+              let outgoingBearing else {
+            return nil
+        }
+
+        var angle = outgoingBearing - incomingBearing
+        while angle > 180 {
+            angle -= 360
+        }
+        while angle < -180 {
+            angle += 360
+        }
+
+        return angle
+    }
+
+    private static func fallbackExitAngle(for exit: Int) -> Int {
+        min(150, max(-150, -70 + ((exit - 1) * 55)))
+    }
+
+    private static func clamp(_ value: Int, min minimum: Int, max maximum: Int) -> Int {
+        Swift.max(minimum, Swift.min(maximum, value))
+    }
+}
+
+private struct RoundaboutExitAngle {
+    let index: Int
+    let angleDegrees: Int
+}
+
+private enum DeviceManeuver: String {
+    case bendLeft
+    case exitLeft
+    case slightLeft
+    case turnLeft
+    case sharpLeft
+    case uTurn
+    case continueAhead = "continue"
+    case exitRight
+    case slightRight
+    case turnRight
+    case sharpRight
+    case roundabout
+    case arrive
+
+    init(instruction: String) {
+        let text = instruction.lowercased()
+
+        if text.contains("roundabout") {
+            self = .roundabout
+        } else if text.contains("u-turn") || text.contains("u turn") {
+            self = .uTurn
+        } else if text.contains("arrive") || text.contains("destination") {
+            self = .arrive
+        } else if text.contains("take the exit") || text.contains("take exit") {
+            self = .exitLeft
+        } else if text.contains("sharp left") {
+            self = .sharpLeft
+        } else if text.contains("slight left") {
+            self = .slightLeft
+        } else if text.contains("bear left") || text.contains("keep left") {
+            self = .bendLeft
+        } else if text.contains("left") {
+            self = .turnLeft
+        } else if text.contains("sharp right") {
+            self = .sharpRight
+        } else if text.contains("slight right") {
+            self = .slightRight
+        } else if text.contains("bear right") || text.contains("keep right") {
+            self = .slightRight
+        } else if text.contains("right") {
+            self = .turnRight
+        } else {
+            self = .continueAhead
+        }
+    }
+
+    var isMeaningfulDirection: Bool {
+        self != .continueAhead
+    }
+
+    var debugTitle: String {
+        switch self {
+            case .bendLeft: return "bend left"
+            case .exitLeft: return "exit left"
+            case .slightLeft: return "slight left"
+            case .turnLeft: return "left"
+            case .sharpLeft: return "sharp left"
+            case .uTurn: return "u-turn"
+            case .continueAhead: return "continue"
+            case .exitRight: return "exit right"
+            case .slightRight: return "slight right"
+            case .turnRight: return "right"
+            case .sharpRight: return "sharp right"
+            case .roundabout: return "roundabout"
+            case .arrive: return "arrive"
+        }
+    }
 }
 
 private enum RideMode: String, CaseIterable, Identifiable {
@@ -2016,6 +2962,107 @@ private extension MKPolyline {
         return coordinates
     }
 
+    var approximateBearingDegrees: Int? {
+        let coordinates = routeCoordinates
+        guard let start = coordinates.first,
+              let end = coordinates.last,
+              start.latitude != end.latitude || start.longitude != end.longitude else {
+            return nil
+        }
+
+        return start.bearingDegrees(to: end)
+    }
+
+    var lastSegmentBearingDegrees: Int? {
+        let coordinates = routeCoordinates
+        guard coordinates.count > 1 else {
+            return nil
+        }
+
+        for index in stride(from: coordinates.count - 1, through: 1, by: -1) {
+            let start = coordinates[index - 1]
+            let end = coordinates[index]
+            if start.latitude != end.latitude || start.longitude != end.longitude {
+                return start.bearingDegrees(to: end)
+            }
+        }
+
+        return nil
+    }
+
+    func sample(at fraction: Double) -> PolylineRouteSample? {
+        let coordinates = routeCoordinates
+        guard coordinates.count > 1 else {
+            return nil
+        }
+
+        let segments = zip(coordinates, coordinates.dropFirst()).map { start, end in
+            (start: start, end: end, distance: MKMapPoint(start).distance(to: MKMapPoint(end)))
+        }
+        let totalDistance = segments.reduce(0) { $0 + $1.distance }
+        guard totalDistance > 0 else {
+            return nil
+        }
+
+        let targetDistance = max(0, min(totalDistance, totalDistance * fraction))
+        var distanceSoFar: CLLocationDistance = 0
+
+        for segment in segments {
+            if distanceSoFar + segment.distance >= targetDistance {
+                let segmentFraction = segment.distance > 0 ? (targetDistance - distanceSoFar) / segment.distance : 0
+                let startPoint = MKMapPoint(segment.start)
+                let endPoint = MKMapPoint(segment.end)
+                let point = MKMapPoint(
+                    x: startPoint.x + ((endPoint.x - startPoint.x) * segmentFraction),
+                    y: startPoint.y + ((endPoint.y - startPoint.y) * segmentFraction)
+                )
+                return PolylineRouteSample(
+                    coordinate: point.coordinate,
+                    bearingDegrees: segment.start.bearingDegrees(to: segment.end)
+                )
+            }
+
+            distanceSoFar += segment.distance
+        }
+
+        guard let segment = segments.last else {
+            return nil
+        }
+
+        return PolylineRouteSample(
+            coordinate: segment.end,
+            bearingDegrees: segment.start.bearingDegrees(to: segment.end)
+        )
+    }
+
+    func bearing(atDistance targetDistance: CLLocationDistance) -> Int? {
+        let coordinates = routeCoordinates
+        guard coordinates.count > 1 else {
+            return nil
+        }
+
+        let segments = zip(coordinates, coordinates.dropFirst()).map { start, end in
+            (start: start, end: end, distance: MKMapPoint(start).distance(to: MKMapPoint(end)))
+        }
+        let totalDistance = segments.reduce(0) { $0 + $1.distance }
+        guard totalDistance > 0 else {
+            return nil
+        }
+
+        let clampedDistance = max(0, min(totalDistance, targetDistance))
+        var distanceSoFar: CLLocationDistance = 0
+
+        for segment in segments {
+            if distanceSoFar + segment.distance >= clampedDistance && segment.distance > 0 {
+                return segment.start.bearingDegrees(to: segment.end)
+            }
+
+            distanceSoFar += segment.distance
+        }
+
+        return segments.last.map { $0.start.bearingDegrees(to: $0.end) }
+    }
+
     func progressNearest(to coordinate: CLLocationCoordinate2D) -> PolylineProgress? {
         let coordinates = routeCoordinates
         guard coordinates.count > 1 else {
@@ -2027,6 +3074,7 @@ private extension MKPolyline {
         var bestDistance = CLLocationDistance.greatestFiniteMagnitude
         var bestDistanceFromStart: CLLocationDistance = 0
         var bestBearing = 0.0
+        var bestCoordinate = coordinates[0]
 
         for (startCoordinate, endCoordinate) in zip(coordinates, coordinates.dropFirst()) {
             let startPoint = MKMapPoint(startCoordinate)
@@ -2038,6 +3086,10 @@ private extension MKPolyline {
                 bestDistance = projectedDistance.distanceToSegment
                 bestDistanceFromStart = distanceFromStart + (segmentDistance * projectedDistance.fractionAlongSegment)
                 bestBearing = Double(startCoordinate.bearingDegrees(to: endCoordinate))
+                bestCoordinate = MKMapPoint(
+                    x: startPoint.x + ((endPoint.x - startPoint.x) * projectedDistance.fractionAlongSegment),
+                    y: startPoint.y + ((endPoint.y - startPoint.y) * projectedDistance.fractionAlongSegment)
+                ).coordinate
             }
 
             distanceFromStart += segmentDistance
@@ -2047,7 +3099,8 @@ private extension MKPolyline {
             distanceToRoute: bestDistance,
             distanceFromStart: bestDistanceFromStart,
             polylineLength: distanceFromStart,
-            routeBearingDegrees: bestBearing
+            routeBearingDegrees: bestBearing,
+            coordinate: bestCoordinate
         )
     }
 }
@@ -2123,6 +3176,7 @@ private enum SampleRoute {
 private final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var currentCoordinate: CLLocationCoordinate2D?
     @Published var currentCourseDegrees: Double?
+    @Published var currentSpeedMetersPerSecond: CLLocationSpeed?
 
     private let manager = CLLocationManager()
     private var shouldTrackRide = false
@@ -2151,6 +3205,8 @@ private final class LocationProvider: NSObject, ObservableObject, CLLocationMana
         shouldTrackRide = true
         manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         manager.distanceFilter = 10
+        manager.allowsBackgroundLocationUpdates = true
+        manager.pausesLocationUpdatesAutomatically = false
 
         switch manager.authorizationStatus {
             case .notDetermined:
@@ -2167,6 +3223,8 @@ private final class LocationProvider: NSObject, ObservableObject, CLLocationMana
     func stopRideTracking() {
         shouldTrackRide = false
         manager.stopUpdatingLocation()
+        manager.allowsBackgroundLocationUpdates = false
+        manager.pausesLocationUpdatesAutomatically = true
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         manager.distanceFilter = kCLDistanceFilterNone
     }
@@ -2189,6 +3247,7 @@ private final class LocationProvider: NSObject, ObservableObject, CLLocationMana
         }
 
         currentCoordinate = location.coordinate
+        currentSpeedMetersPerSecond = max(location.speed, 0)
 
         if location.course >= 0 && location.speed > 1.4 {
             currentCourseDegrees = location.course
@@ -2269,6 +3328,53 @@ private struct RideModeButtonStyle: ButtonStyle {
                 isSelected ? Color.cyan.opacity(configuration.isPressed ? 0.78 : 0.94) : Color.white.opacity(configuration.isPressed ? 0.14 : 0.07),
                 in: RoundedRectangle(cornerRadius: 7, style: .continuous)
             )
+    }
+}
+
+private struct DebugRideButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.cyan)
+            .frame(height: 30)
+            .background(Color.white.opacity(configuration.isPressed ? 0.15 : 0.08), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
+private final class KeyboardObserver: ObservableObject {
+    @Published var height: CGFloat = 0
+
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        observers.append(
+            NotificationCenter.default.addObserver(
+                forName: UIResponder.keyboardWillChangeFrameNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+                    return
+                }
+
+                self?.height = max(0, UIScreen.main.bounds.height - frame.minY)
+            }
+        )
+
+        observers.append(
+            NotificationCenter.default.addObserver(
+                forName: UIResponder.keyboardWillHideNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.height = 0
+            }
+        )
+    }
+
+    deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
     }
 }
 

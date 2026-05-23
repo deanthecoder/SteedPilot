@@ -11,6 +11,7 @@
 #pragma once
 
 #include "Color.h"
+#include "ImageAssets.h"
 
 namespace SteedPilot {
 
@@ -98,6 +99,16 @@ public:
      * @param color Fill color.
      */
     virtual void fillCircle(int cx, int cy, int radius, Color color) = 0;
+
+    /**
+     * Draws a generated grey plus alpha image.
+     *
+     * @param x Left edge x coordinate.
+     * @param y Top edge y coordinate.
+     * @param image Generated image data.
+     * @param opacity Image opacity from 0 to 255.
+     */
+    virtual void image(int x, int y, const SteedPilotGrayAlphaImage& image, uint8_t opacity = 255) = 0;
 
     /**
      * Draws text using one of the fixed SteedPilot font sizes.

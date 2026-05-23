@@ -131,10 +131,12 @@ DisplayMode parseMode(const char* value) {
 
 Maneuver parseManeuver(const char* value) {
     if (stringEquals(value, "bendLeft")) return Maneuver::BendLeft;
+    if (stringEquals(value, "exitLeft")) return Maneuver::ExitLeft;
     if (stringEquals(value, "slightLeft")) return Maneuver::SlightLeft;
     if (stringEquals(value, "turnLeft")) return Maneuver::TurnLeft;
     if (stringEquals(value, "sharpLeft")) return Maneuver::SharpLeft;
     if (stringEquals(value, "uTurn")) return Maneuver::UTurn;
+    if (stringEquals(value, "exitRight")) return Maneuver::ExitRight;
     if (stringEquals(value, "slightRight")) return Maneuver::SlightRight;
     if (stringEquals(value, "turnRight")) return Maneuver::TurnRight;
     if (stringEquals(value, "sharpRight")) return Maneuver::SharpRight;

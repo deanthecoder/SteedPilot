@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "state",
+  "mode": "navigation",
+  "link": "connected",
+  "maneuver": "exitLeft",
+  "distanceToManeuverMeters": 260,
+  "distanceToDestinationMeters": 18400,
+  "maneuverProgressRemaining": 58,
+  "tripProgressComplete": 42
+}

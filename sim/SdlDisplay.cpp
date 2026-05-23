@@ -439,6 +439,30 @@ void SdlDisplay::drawImageCentered(const SdlImage& image, float opacity) {
     }
 }
 
+void SdlDisplay::image(int x, int y, const SteedPilotGrayAlphaImage& image, uint8_t opacity) {
+    SDL_SetRenderTarget(_renderer, _target);
+    for (int row = 0; row < image.height; ++row) {
+        for (int column = 0; column < image.width; ++column) {
+            const uint8_t* pixel = image.pixels + (row * image.width + column) * 2;
+            const uint8_t gray = pixel[0];
+            const int alpha = (int)((pixel[1] * opacity) / 255);
+            if (alpha <= 0) {
+                continue;
+            }
+
+            SDL_SetRenderDrawColor(
+                _renderer,
+                (uint8_t)((gray * alpha) / 255),
+                (uint8_t)((gray * alpha) / 255),
+                (uint8_t)((gray * alpha) / 255),
+                255
+            );
+            const SDL_Rect rect{sx(x + column), sy(y + row), ss(1), ss(1)};
+            SDL_RenderFillRect(_renderer, &rect);
+        }
+    }
+}
+
 int SdlDisplay::width() const {
     return _width;
 }

@@ -87,6 +87,7 @@ public:
     void circle(int cx, int cy, int radius, SteedPilot::Color color, int thickness = 1) override;
     void arc(int cx, int cy, int radius, float startDegrees, float sweepDegrees, SteedPilot::Color color, int thickness = 1) override;
     void fillCircle(int cx, int cy, int radius, SteedPilot::Color color) override;
+    void image(int x, int y, const SteedPilotGrayAlphaImage& image, uint8_t opacity = 255) override;
     void text(int x, int y, const char* value, int size, SteedPilot::Color color, SteedPilot::TextAlign align) override;
 
 private:

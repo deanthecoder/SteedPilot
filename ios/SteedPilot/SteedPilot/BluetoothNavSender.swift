@@ -14,6 +14,7 @@ import Foundation
 
 final class BluetoothNavSender: NSObject, ObservableObject {
     @Published private(set) var status = "Idle"
+    @Published private(set) var isConnected = false
     @Published private(set) var isReplaying = false
     @Published private(set) var replayProgress = ""
 
@@ -185,6 +186,7 @@ extension BluetoothNavSender: CBCentralManagerDelegate {
             scanForSteedPilot()
         } else {
             status = "Bluetooth unavailable"
+            isConnected = false
         }
     }
 
@@ -209,6 +211,7 @@ extension BluetoothNavSender: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         status = "Disconnected"
+        isConnected = false
         isConnecting = false
         characteristic = nil
         stopHeartbeatTimer()
@@ -217,6 +220,7 @@ extension BluetoothNavSender: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         status = "Connect failed"
+        isConnected = false
         isConnecting = false
         scanForSteedPilot()
     }
@@ -226,11 +230,13 @@ extension BluetoothNavSender: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if error != nil {
             status = "Service failed"
+            isConnected = false
             return
         }
 
         guard let service = peripheral.services?.first(where: { $0.uuid == serviceUuid }) else {
             status = "Service missing"
+            isConnected = false
             return
         }
 
@@ -240,15 +246,18 @@ extension BluetoothNavSender: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         if error != nil {
             status = "Characteristic failed"
+            isConnected = false
             return
         }
 
         guard let characteristic = service.characteristics?.first(where: { $0.uuid == stateCharacteristicUuid }) else {
             status = "Characteristic missing"
+            isConnected = false
             return
         }
 
         self.characteristic = characteristic
+        isConnected = true
         startHeartbeatTimer()
         if !pendingPayloads.isEmpty {
             sendNextPayload(to: characteristic)
@@ -260,6 +269,7 @@ extension BluetoothNavSender: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if error != nil {
             status = "Write failed"
+            isConnected = peripheral.state == .connected
             return
         }
 

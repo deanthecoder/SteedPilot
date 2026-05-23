@@ -109,6 +109,16 @@ public:
     void fillCircle(int cx, int cy, int radius, SteedPilot::Color color) override;
 
     /**
+     * Draws a generated grey plus alpha image into the framebuffer.
+     *
+     * @param x Left edge x coordinate.
+     * @param y Top edge y coordinate.
+     * @param image Generated image data.
+     * @param opacity Image opacity from 0 to 255.
+     */
+    void image(int x, int y, const SteedPilotGrayAlphaImage& image, uint8_t opacity = 255) override;
+
+    /**
      * Draws atlas-backed text into the framebuffer.
      *
      * @param x Anchor x coordinate.
