@@ -62,11 +62,28 @@ void drawArcMarker(Display& display, int cx, int cy, int radius, float degrees, 
     display.fillCircle(x, y, markerRadius, color);
 }
 
-void drawTripProgressArc(Display& display, const NavState& state) {
+float easedProgress(float current, int target, uint32_t elapsedMs) {
+    if (target < 0) {
+        return -1.0f;
+    }
+
+    if (current < 0.0f) {
+        return (float)target;
+    }
+
+    const float alpha = elapsedMs >= 500 ? 1.0f : (float)elapsedMs / 500.0f;
+    return current + (((float)target - current) * alpha);
+}
+
+void drawTripProgressArc(Display& display, float tripProgress) {
+    if (tripProgress < 0.0f) {
+        return;
+    }
+
     const int cx = centerX(display);
     const int cy = centerY(display);
     const int radius = faceRadius(display);
-    const int trip = clampProgress(state.tripProgressComplete);
+    const int trip = clampProgress((int)(tripProgress + 0.5f));
 
     if (trip >= 0) {
         const float sweep = ProgressSweepDegrees * (float)trip / 100.0f;
@@ -78,11 +95,15 @@ void drawTripProgressArc(Display& display, const NavState& state) {
     }
 }
 
-void drawManeuverProgressArc(Display& display, const NavState& state) {
+void drawManeuverProgressArc(Display& display, float maneuverProgress) {
+    if (maneuverProgress < 0.0f) {
+        return;
+    }
+
     const int cx = centerX(display);
     const int cy = centerY(display);
     const int radius = faceRadius(display);
-    const int maneuver = clampProgress(state.maneuverProgressRemaining);
+    const int maneuver = clampProgress((int)(maneuverProgress + 0.5f));
 
     if (maneuver >= 0) {
         const int complete = 100 - maneuver;
@@ -159,6 +180,62 @@ void drawArrowHead(Display& display, int tipX, int tipY, float degrees, int leng
 
     display.line(tipX, tipY, wingAX, wingAY, color, thickness);
     display.line(tipX, tipY, wingBX, wingBY, color, thickness);
+}
+
+uint8_t sampleImageChannel(const SteedPilotGrayAlphaImage& image, float x, float y, int channel) {
+    if (x < 0.0f || y < 0.0f || x >= (float)(image.width - 1) || y >= (float)(image.height - 1)) {
+        return 0;
+    }
+
+    const int x0 = (int)x;
+    const int y0 = (int)y;
+    const int x1 = x0 + 1;
+    const int y1 = y0 + 1;
+    const float fx = x - (float)x0;
+    const float fy = y - (float)y0;
+    const uint8_t* p00 = image.pixels + (y0 * image.width + x0) * 2;
+    const uint8_t* p10 = image.pixels + (y0 * image.width + x1) * 2;
+    const uint8_t* p01 = image.pixels + (y1 * image.width + x0) * 2;
+    const uint8_t* p11 = image.pixels + (y1 * image.width + x1) * 2;
+    const float top = (float)p00[channel] + ((float)p10[channel] - (float)p00[channel]) * fx;
+    const float bottom = (float)p01[channel] + ((float)p11[channel] - (float)p01[channel]) * fx;
+    const float value = top + (bottom - top) * fy;
+    return (uint8_t)(value + 0.5f);
+}
+
+/**
+ * Draws a generated greyscale bitmap around a center point, optionally mirrored
+ * and rotated. This keeps desktop screenshots close to the final device output
+ * while allowing right-hand maneuvers to reuse the left-hand artwork.
+ */
+void drawImageTransformed(Display& display, int cx, int cy, const SteedPilotGrayAlphaImage& image, float rotationDegrees = 0.0f, bool mirrorX = false) {
+    const float radians = rotationDegrees * Pi / 180.0f;
+    const float sinA = std::sin(radians);
+    const float cosA = std::cos(radians);
+    const float halfW = (float)image.width / 2.0f;
+    const float halfH = (float)image.height / 2.0f;
+    const int extent = (int)(std::sqrt((float)(image.width * image.width + image.height * image.height)) / 2.0f) + 2;
+
+    for (int dy = -extent; dy <= extent; ++dy) {
+        for (int dx = -extent; dx <= extent; ++dx) {
+            float sourceX = (float)dx * cosA + (float)dy * sinA;
+            const float sourceY = -(float)dx * sinA + (float)dy * cosA;
+            if (mirrorX) {
+                sourceX = -sourceX;
+            }
+
+            sourceX += halfW;
+            const float sourcePixelY = sourceY + halfH;
+            const uint8_t alpha = sampleImageChannel(image, sourceX, sourcePixelY, 1);
+            if (alpha == 0) {
+                continue;
+            }
+
+            const uint8_t gray = sampleImageChannel(image, sourceX, sourcePixelY, 0);
+            const uint8_t value = (uint8_t)(((int)gray * (int)alpha) / 255);
+            display.pixel(cx + dx, cy + dy, Color{value, value, value});
+        }
+    }
 }
 
 void drawContinueLane(Display& display, int cx, int cy, Color color) {
@@ -264,6 +341,71 @@ void drawRoundabout(Display& display, int cx, int cy, const NavState& state) {
     display.fillCircle(targetOuterX, targetOuterY, 7, Palette::Cyan);
 }
 
+void drawRoundaboutBitmap(Display& display, int cx, int cy, const NavState& state) {
+    const int exitCount = state.roundaboutExitCount > 0 ? state.roundaboutExitCount : 4;
+    const int targetExit = state.roundaboutExit > 0 ? state.roundaboutExit : 1;
+    const float startDegrees = -155.0f;
+    const float stepDegrees = 250.0f / (float)(exitCount > 1 ? exitCount - 1 : 1);
+    const bool hasAngles = state.roundaboutExitAngleCount > 0;
+    const float targetDegrees = hasAngles && targetExit <= state.roundaboutExitAngleCount
+        ? (float)state.roundaboutExitAngles[targetExit - 1]
+        : startDegrees + stepDegrees * (float)(targetExit - 1);
+
+    for (int i = 0; i < exitCount; ++i) {
+        const int exitNumber = i + 1;
+        if (exitNumber == targetExit) {
+            continue;
+        }
+
+        const float degrees = hasAngles && i < state.roundaboutExitAngleCount
+            ? (float)state.roundaboutExitAngles[i]
+            : startDegrees + stepDegrees * (float)i;
+        drawImageTransformed(display, cx, cy, SteedPilotRoundaboutNonExit, degrees);
+    }
+
+    drawImageTransformed(display, cx, cy, SteedPilotRoundaboutRoute, targetDegrees);
+}
+
+void drawDirectionBitmap(Display& display, int cx, int cy, Maneuver maneuver) {
+    switch (maneuver) {
+        case Maneuver::Continue:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionContinue);
+            break;
+        case Maneuver::BendLeft:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionBendLeft);
+            break;
+        case Maneuver::ExitLeft:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionExitLeft);
+            break;
+        case Maneuver::SlightLeft:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionSlightLeft);
+            break;
+        case Maneuver::TurnLeft:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionTurnLeft);
+            break;
+        case Maneuver::SharpLeft:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionSharpLeft);
+            break;
+        case Maneuver::UTurn:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionUTurnLeft);
+            break;
+        case Maneuver::ExitRight:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionExitLeft, 0.0f, true);
+            break;
+        case Maneuver::SlightRight:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionSlightLeft, 0.0f, true);
+            break;
+        case Maneuver::TurnRight:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionTurnLeft, 0.0f, true);
+            break;
+        case Maneuver::SharpRight:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionSharpLeft, 0.0f, true);
+            break;
+        default:
+            break;
+    }
+}
+
 const char* maneuverLabel(Maneuver maneuver) {
     switch (maneuver) {
         case Maneuver::BendLeft: return "BEND IN";
@@ -339,6 +481,12 @@ App::App(UnitSettings units) : _units(units) {}
 
 void App::setState(const NavState& state) {
     _state = state;
+    if (_displayTripProgress < 0.0f && state.tripProgressComplete >= 0) {
+        _displayTripProgress = (float)state.tripProgressComplete;
+    }
+    if (_displayManeuverProgress < 0.0f && state.maneuverProgressRemaining >= 0) {
+        _displayManeuverProgress = (float)state.maneuverProgressRemaining;
+    }
 }
 
 const NavState& App::state() const {
@@ -347,6 +495,8 @@ const NavState& App::state() const {
 
 void App::tick(uint32_t elapsedMs) {
     _timeMs += elapsedMs;
+    _displayTripProgress = easedProgress(_displayTripProgress, _state.tripProgressComplete, elapsedMs);
+    _displayManeuverProgress = easedProgress(_displayManeuverProgress, _state.maneuverProgressRemaining, elapsedMs);
 }
 
 void App::render(Display& display) {
@@ -375,8 +525,8 @@ void App::render(Display& display) {
 void App::renderNavigation(Display& display) {
     drawCircularShell(display);
     if (_state.maneuver != Maneuver::Arrive) {
-        drawTripProgressArc(display, _state);
-        drawManeuverProgressArc(display, _state);
+        drawTripProgressArc(display, _displayTripProgress);
+        drawManeuverProgressArc(display, _displayManeuverProgress);
     }
     drawSpeedWarning(display, _state);
     drawLinkStatus(display, _state);
@@ -386,27 +536,16 @@ void App::renderNavigation(Display& display) {
     char label[24];
     maneuverLabelText(_state, label, sizeof(label));
 
+    const int graphicY = cy - 48 + GraphicOffsetY;
     if (_state.maneuver == Maneuver::Roundabout) {
-        drawRoundabout(display, cx, cy - 34 + GraphicOffsetY, _state);
+        drawRoundaboutBitmap(display, cx, graphicY, _state);
         char exitLabel[16];
         std::snprintf(exitLabel, sizeof(exitLabel), "EXIT %d", _state.roundaboutExit);
         display.text(cx, 38, exitLabel, 2, Palette::Muted, TextAlign::Center);
-    } else if (_state.maneuver == Maneuver::BendLeft) {
-        drawBendLeft(display, cx, cy - 44 + GraphicOffsetY, Palette::Cyan);
-    } else if (_state.maneuver == Maneuver::ExitLeft) {
-        drawExitLeft(display, cx, cy - 44 + GraphicOffsetY, Palette::Cyan);
-    } else if (_state.maneuver == Maneuver::ExitRight) {
-        drawExitRight(display, cx, cy - 44 + GraphicOffsetY, Palette::Cyan);
-    } else if (_state.maneuver == Maneuver::TurnLeft) {
-        drawTurnLeft(display, cx, cy - 36 + GraphicOffsetY, Palette::Cyan);
-    } else if (_state.maneuver == Maneuver::UTurn) {
-        drawUTurn(display, cx, cy - 52 + GraphicOffsetY, Palette::Cyan);
-    } else if (_state.maneuver == Maneuver::Continue) {
-        drawContinueLane(display, cx, cy - 34 + GraphicOffsetY, Palette::Cyan);
     } else if (_state.maneuver == Maneuver::Arrive) {
         drawFinishFlag(display, cx, cy);
     } else {
-        drawArrow(display, cx, cy - 34 + GraphicOffsetY, 82, maneuverAngle(_state.maneuver), Palette::Cyan);
+        drawDirectionBitmap(display, cx, graphicY, _state.maneuver);
     }
     if (_state.maneuver != Maneuver::Arrive) {
         drawDistance(display, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
@@ -416,14 +555,14 @@ void App::renderNavigation(Display& display) {
 
 void App::renderDestination(Display& display) {
     drawCircularShell(display);
-    drawTripProgressArc(display, _state);
+    drawTripProgressArc(display, _displayTripProgress);
     drawLinkStatus(display, _state);
 
     const int cx = centerX(display);
     const int cy = centerY(display);
-    drawArrow(display, cx, cy - 34 + GraphicOffsetY, 88, (float)_state.destinationBearingDegrees, Palette::Amber);
+    drawImageTransformed(display, cx, cy - 34 + GraphicOffsetY, SteedPilotDirectionHeading, (float)_state.destinationBearingDegrees);
     drawDistance(display, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::White);
-    display.text(cx, InstructionY, "DESTINATION", 2, Palette::Muted, TextAlign::Center);
+    display.text(cx, InstructionY, _state.offRoute ? "OFF ROUTE" : "DESTINATION", 2, _state.offRoute ? Palette::Amber : Palette::Muted, TextAlign::Center);
 }
 
 void App::renderRideInfo(Display& display) {

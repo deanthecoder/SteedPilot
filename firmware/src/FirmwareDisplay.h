@@ -63,6 +63,15 @@ public:
     void present() override;
 
     /**
+     * Draws one logical pixel into the framebuffer.
+     *
+     * @param x Pixel x coordinate.
+     * @param y Pixel y coordinate.
+     * @param color Pixel color.
+     */
+    void pixel(int x, int y, SteedPilot::Color color) override;
+
+    /**
      * Draws an anti-aliased line into the framebuffer.
      *
      * @param x0 Start x coordinate.

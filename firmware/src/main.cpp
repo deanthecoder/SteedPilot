@@ -137,6 +137,7 @@ void applyUpdate(SteedPilot::NavState& state, const SteedPilot::NavPacket& packe
     if (packet.fields & SteedPilot::NavFieldCurrentSpeed) state.currentSpeed = packet.state.currentSpeed;
     if (packet.fields & SteedPilot::NavFieldSpeedLimit) state.speedLimit = packet.state.speedLimit;
     if (packet.fields & SteedPilot::NavFieldSpeedUnit) state.speedUnit = packet.state.speedUnit;
+    if (packet.fields & SteedPilot::NavFieldOffRoute) state.offRoute = packet.state.offRoute;
 }
 
 void applyBlePacket(const SteedPilot::NavPacket& packet) {

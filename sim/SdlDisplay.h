@@ -83,6 +83,7 @@ public:
     void clear(SteedPilot::Color color) override;
     void present() override;
 
+    void pixel(int x, int y, SteedPilot::Color color) override;
     void line(int x0, int y0, int x1, int y1, SteedPilot::Color color, int thickness = 1) override;
     void circle(int cx, int cy, int radius, SteedPilot::Color color, int thickness = 1) override;
     void arc(int cx, int cy, int radius, float startDegrees, float sweepDegrees, SteedPilot::Color color, int thickness = 1) override;

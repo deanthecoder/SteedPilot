@@ -519,6 +519,13 @@ void SdlDisplay::present() {
     SDL_SetRenderTarget(_renderer, _target);
 }
 
+void SdlDisplay::pixel(int x, int y, SteedPilot::Color color) {
+    SDL_SetRenderTarget(_renderer, _target);
+    setColor(color);
+    const SDL_Rect rect{sx(x), sy(y), ss(1), ss(1)};
+    SDL_RenderFillRect(_renderer, &rect);
+}
+
 void SdlDisplay::line(int x0, int y0, int x1, int y1, SteedPilot::Color color, int thickness) {
     setColor(color);
     const int radius = ss(std::max(1, thickness)) / 2;

@@ -55,6 +55,15 @@ public:
     virtual void present() = 0;
 
     /**
+     * Draws one logical display pixel.
+     *
+     * @param x Pixel x coordinate.
+     * @param y Pixel y coordinate.
+     * @param color Pixel color.
+     */
+    virtual void pixel(int x, int y, Color color) = 0;
+
+    /**
      * Draws a straight line.
      *
      * @param x0 Start x coordinate.

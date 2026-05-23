@@ -57,6 +57,8 @@ private:
     UnitSettings _units;
     NavState _state;
     uint32_t _timeMs = 0;
+    float _displayTripProgress = -1.0f;
+    float _displayManeuverProgress = -1.0f;
 
     /**
      * Renders the turn-by-turn navigation screen.

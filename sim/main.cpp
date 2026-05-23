@@ -164,6 +164,7 @@ int exportScreenshots() {
         {"fixtures/navigation-roundabout.json", "img/navigation-roundabout.png"},
         {"fixtures/navigation-speed-warning.json", "img/navigation-speed-warning.png"},
         {"fixtures/destination-heading.json", "img/destination-heading.png"},
+        {"fixtures/destination-off-route.json", "img/destination-off-route.png"},
         {"fixtures/disconnected.json", "img/disconnected.png"},
     };
 

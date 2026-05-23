@@ -66,6 +66,7 @@ struct NavState {
     int16_t currentSpeed = 0;
     int16_t speedLimit = 0;
     SpeedUnit speedUnit = SpeedUnit::Mph;
+    bool offRoute = false;
     bool connected = true;
     LinkState linkState = LinkState::Connected;
 };

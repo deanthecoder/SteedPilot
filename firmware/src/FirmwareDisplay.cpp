@@ -189,6 +189,10 @@ void FirmwareDisplay::present() {
     esp_lcd_panel_draw_bitmap(_panel, 0, 0, LcdWidth, LcdHeight, _frame);
 }
 
+void FirmwareDisplay::pixel(int x, int y, SteedPilot::Color color) {
+    putPixel(x, y, rgb565(color));
+}
+
 void FirmwareDisplay::line(int x0, int y0, int x1, int y1, SteedPilot::Color color, int thickness) {
     const float radius = max(0.5f, (float)(thickness - 1) * 0.5f);
     const int boundsRadius = (int)ceilf(radius + 1.0f);

@@ -36,6 +36,36 @@ extern const SteedPilotGrayAlphaImage SteedPilotDtcLogo;
 /** Arrival chequered flag bitmap. */
 extern const SteedPilotGrayAlphaImage SteedPilotFinishFlag;
 
+/** Continue direction bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotDirectionContinue;
+
+/** Bend left direction bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotDirectionBendLeft;
+
+/** Exit left direction bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotDirectionExitLeft;
+
+/** Slight left direction bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotDirectionSlightLeft;
+
+/** Turn left direction bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotDirectionTurnLeft;
+
+/** Sharp left direction bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotDirectionSharpLeft;
+
+/** U turn left direction bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotDirectionUTurnLeft;
+
+/** Heading direction bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotDirectionHeading;
+
+/** Roundabout selected exit bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotRoundaboutRoute;
+
+/** Roundabout muted exit bitmap. */
+extern const SteedPilotGrayAlphaImage SteedPilotRoundaboutNonExit;
+
 #ifdef __cplusplus
 }
 #endif

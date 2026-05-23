@@ -35,7 +35,8 @@ enum NavFieldMask : uint32_t {
     NavFieldRoundabout = 1u << 8,
     NavFieldCurrentSpeed = 1u << 9,
     NavFieldSpeedLimit = 1u << 10,
-    NavFieldSpeedUnit = 1u << 11
+    NavFieldSpeedUnit = 1u << 11,
+    NavFieldOffRoute = 1u << 12
 };
 
 struct NavPacket {

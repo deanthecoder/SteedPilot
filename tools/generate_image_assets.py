@@ -31,6 +31,94 @@ IMAGES = [
         "source": ROOT / "img" / "flag.png",
         "description": "Arrival chequered flag bitmap",
     },
+    {
+        "name": "SteedPilotDirectionContinue",
+        "pixels": "SteedPilotDirectionContinuePixels",
+        "source": ROOT / "img" / "directions" / "Continue.png",
+        "description": "Continue direction bitmap",
+        "canvas_size": (220, 220),
+        "fit_size": (170, 190),
+        "transparent_black": True,
+    },
+    {
+        "name": "SteedPilotDirectionBendLeft",
+        "pixels": "SteedPilotDirectionBendLeftPixels",
+        "source": ROOT / "img" / "directions" / "BendLeft.png",
+        "description": "Bend left direction bitmap",
+        "canvas_size": (220, 220),
+        "fit_size": (190, 190),
+        "transparent_black": True,
+    },
+    {
+        "name": "SteedPilotDirectionExitLeft",
+        "pixels": "SteedPilotDirectionExitLeftPixels",
+        "source": ROOT / "img" / "directions" / "ExitLeft.png",
+        "description": "Exit left direction bitmap",
+        "canvas_size": (220, 220),
+        "fit_size": (190, 190),
+        "transparent_black": True,
+    },
+    {
+        "name": "SteedPilotDirectionSlightLeft",
+        "pixels": "SteedPilotDirectionSlightLeftPixels",
+        "source": ROOT / "img" / "directions" / "SlightLeft.png",
+        "description": "Slight left direction bitmap",
+        "canvas_size": (220, 220),
+        "fit_size": (190, 190),
+        "transparent_black": True,
+    },
+    {
+        "name": "SteedPilotDirectionTurnLeft",
+        "pixels": "SteedPilotDirectionTurnLeftPixels",
+        "source": ROOT / "img" / "directions" / "TurnLeft.png",
+        "description": "Turn left direction bitmap",
+        "canvas_size": (220, 220),
+        "fit_size": (190, 190),
+        "transparent_black": True,
+    },
+    {
+        "name": "SteedPilotDirectionSharpLeft",
+        "pixels": "SteedPilotDirectionSharpLeftPixels",
+        "source": ROOT / "img" / "directions" / "SharpLeft.png",
+        "description": "Sharp left direction bitmap",
+        "canvas_size": (220, 220),
+        "fit_size": (190, 190),
+        "transparent_black": True,
+    },
+    {
+        "name": "SteedPilotDirectionUTurnLeft",
+        "pixels": "SteedPilotDirectionUTurnLeftPixels",
+        "source": ROOT / "img" / "directions" / "UTurnLeft.png",
+        "description": "U turn left direction bitmap",
+        "canvas_size": (220, 220),
+        "fit_size": (190, 190),
+        "transparent_black": True,
+    },
+    {
+        "name": "SteedPilotDirectionHeading",
+        "pixels": "SteedPilotDirectionHeadingPixels",
+        "source": ROOT / "img" / "directions" / "Heading.png",
+        "description": "Heading direction bitmap",
+        "canvas_size": (160, 160),
+        "fit_size": (140, 140),
+        "transparent_black": True,
+    },
+    {
+        "name": "SteedPilotRoundaboutRoute",
+        "pixels": "SteedPilotRoundaboutRoutePixels",
+        "source": ROOT / "img" / "directions" / "Roundabout.png",
+        "description": "Roundabout selected exit bitmap",
+        "canvas_size": (190, 190),
+        "fit_size": (180, 180),
+    },
+    {
+        "name": "SteedPilotRoundaboutNonExit",
+        "pixels": "SteedPilotRoundaboutNonExitPixels",
+        "source": ROOT / "img" / "directions" / "RoundaboutNonExit.png",
+        "description": "Roundabout muted exit bitmap",
+        "canvas_size": (190, 190),
+        "fit_size": (180, 180),
+    },
 ]
 
 
@@ -42,12 +130,41 @@ def byte_lines(values, columns=18):
     return "\n".join(lines)
 
 
+def apply_transparent_black(image):
+    converted = Image.new("LA", image.size)
+    pixels = []
+    for gray, alpha in image.getdata():
+        if gray <= 4 or alpha == 0:
+            pixels.append((255, 0))
+        else:
+            pixels.append((255, (gray * alpha) // 255))
+    converted.putdata(pixels)
+    return converted
+
+
+def fit_to_canvas(image, definition):
+    if "fit_size" in definition:
+        image.thumbnail(definition["fit_size"], Image.Resampling.LANCZOS)
+
+    if "canvas_size" not in definition:
+        return image
+
+    canvas = Image.new("LA", definition["canvas_size"], (0, 0))
+    left = (canvas.width - image.width) // 2
+    top = (canvas.height - image.height) // 2
+    canvas.paste(image, (left, top), image.getchannel("A"))
+    return canvas.convert("LA")
+
+
 def load_image(definition):
     image = Image.open(definition["source"]).convert("LA")
     if "max_size" in definition:
         image.thumbnail(definition["max_size"], Image.Resampling.LANCZOS)
 
-    return image
+    if definition.get("transparent_black"):
+        image = apply_transparent_black(image)
+
+    return fit_to_canvas(image, definition)
 
 
 def image_pixels(image):

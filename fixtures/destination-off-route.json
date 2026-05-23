@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "state",
+  "mode": "destination",
+  "offRoute": true,
+  "distanceToDestinationMeters": 2400,
+  "destinationBearingDegrees": 40,
+  "tripProgressComplete": 62,
+  "speed": { "current": 30, "limit": 25, "unit": "mph" }
+}

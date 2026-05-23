@@ -256,6 +256,11 @@ bool parseNavPacketJson(const char* json, NavPacket& packet) {
         packet.fields |= NavFieldLink;
     }
 
+    if (readBool(json, "offRoute", boolValue)) {
+        packet.state.offRoute = boolValue;
+        packet.fields |= NavFieldOffRoute;
+    }
+
     if (readInt(json, "distanceToManeuverMeters", value)) { packet.state.distanceToManeuverMeters = value; packet.fields |= NavFieldDistanceToManeuver; }
     if (readInt(json, "distanceToDestinationMeters", value)) { packet.state.distanceToDestinationMeters = value; packet.fields |= NavFieldDistanceToDestination; }
     if (readInt(json, "maneuverProgressRemaining", value)) { packet.state.maneuverProgressRemaining = (int8_t)value; packet.fields |= NavFieldManeuverProgress; }
