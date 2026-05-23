@@ -41,6 +41,7 @@ struct ContentView: View {
     @State private var showingRouteLibrary = false
     @State private var showingSettings = false
     @State private var showingMapKitDebug = false
+    @State private var searchEditorPresented = false
     @State private var navigationDebugLog: [String] = []
     @State private var saveRouteName = ""
     @State private var savedRoutes: [SavedRoute] = []
@@ -54,7 +55,7 @@ struct ContentView: View {
     private let fixtures = NavFixtures.loadFixtures()
     private let navigationDebugLogFileName = "SteedPilotNavigation.log"
     private let replayRoute = NavFixtures.loadReplayRoute()
-    private let rideUpdateTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+    private let rideUpdateTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         GeometryReader { geometry in
@@ -79,6 +80,10 @@ struct ContentView: View {
                 if routeActive {
                     rideStatusOverlay(screenHeight: geometry.size.height, bottomInset: geometry.safeAreaInsets.bottom)
                 }
+
+                if searchEditorPresented {
+                    searchEditorOverlay(topInset: geometry.safeAreaInsets.top)
+                }
             }
             .ignoresSafeArea(edges: .bottom)
             .background(Color.black)
@@ -96,6 +101,9 @@ struct ContentView: View {
             .onChange(of: avoidMotorways) { _, _ in
                 recalculateRoute()
             }
+            .onChange(of: speedWarningLimitMph) { _, _ in
+                sendRideUpdate()
+            }
             .onReceive(rideUpdateTimer) { _ in
                 sendRideUpdate()
             }
@@ -110,12 +118,8 @@ struct ContentView: View {
                 UIApplication.shared.isIdleTimerDisabled = isActive
             }
             .onChange(of: searchFocused) { _, isFocused in
-                guard isFocused else {
-                    return
-                }
-
-                withAnimation(.snappy(duration: 0.22)) {
-                    panelState = .expanded
+                if !isFocused {
+                    searchEditorPresented = false
                 }
             }
             .onAppear(perform: configureView)
@@ -163,6 +167,12 @@ struct ContentView: View {
                 if let debugMapCoordinate {
                     Annotation("Test position", coordinate: debugMapCoordinate) {
                         DebugRidePositionPin()
+                    }
+                }
+
+                if let rideMapCoordinate {
+                    Annotation("Current position", coordinate: rideMapCoordinate) {
+                        RidePositionPin()
                     }
                 }
 
@@ -255,6 +265,7 @@ struct ContentView: View {
 
     private func routeBuilderSheet(screenHeight: CGFloat, bottomInset: CGFloat) -> some View {
         let keyboardLift = searchFocused ? max(0, keyboard.height - bottomInset) : 0
+        let contentHeight = routeBuilderHeight(for: screenHeight, keyboardLift: keyboardLift)
 
         return VStack(spacing: 0) {
             Button(action: togglePanel) {
@@ -297,7 +308,7 @@ struct ContentView: View {
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
                 .padding(.bottom, bottomInset + 14)
-                .frame(height: routeBuilderHeight(for: screenHeight))
+                .frame(height: contentHeight)
                 .clipped()
             }
         }
@@ -336,12 +347,13 @@ struct ContentView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
 
-                TextField("Search for a place", text: $searchText)
-                    .focused($searchFocused)
-                    .submitLabel(.search)
-                    .textInputAutocapitalization(.words)
-                    .disableAutocorrection(true)
-                    .onSubmit(searchForPlace)
+                Button(action: showSearchEditor) {
+                    Text(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Search for a place" : searchText)
+                        .foregroundStyle(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .primary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityLabel("Search for a place")
 
                 if isSearching {
                     ProgressView()
@@ -376,6 +388,61 @@ struct ContentView: View {
         }
         .font(.subheadline)
         .buttonStyle(.plain)
+    }
+
+    private func searchEditorOverlay(topInset: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+
+                TextField("Search for a place", text: $searchText)
+                    .focused($searchFocused)
+                    .submitLabel(.search)
+                    .textInputAutocapitalization(.words)
+                    .disableAutocorrection(true)
+                    .onSubmit {
+                        searchForPlace()
+                        hideSearchEditor()
+                    }
+
+                if isSearching {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Button {
+                    searchForPlace()
+                    hideSearchEditor()
+                } label: {
+                    Image(systemName: "arrow.forward.circle.fill")
+                }
+                .disabled(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSearching)
+
+                Button(action: hideSearchEditor) {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .foregroundStyle(.secondary)
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 12)
+            .frame(height: 50)
+            .background(Color(red: 0.045, green: 0.050, blue: 0.060).opacity(0.96), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.36), radius: 16, y: 6)
+            .padding(.horizontal, 14)
+            .padding(.top, topInset + 8)
+
+            Spacer()
+        }
+        .foregroundStyle(.white)
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .onAppear {
+            searchFocused = true
+        }
     }
 
     @ViewBuilder
@@ -452,7 +519,7 @@ struct ContentView: View {
                     )
 
                     Button(action: startRoute) {
-                        Label("Start ride", systemImage: selectedRideMode.icon)
+                        Label("Start ride", systemImage: "motorcycle.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(StartRideButtonStyle())
@@ -592,6 +659,14 @@ struct ContentView: View {
         }
 
         return simulatedRouteProgress(at: debugRideDistanceMeters)?.coordinate
+    }
+
+    private var rideMapCoordinate: CLLocationCoordinate2D? {
+        guard routeActive, debugRideDistanceMeters == nil else {
+            return nil
+        }
+
+        return locationProvider.currentCoordinate
     }
 
     private var waypointEditList: some View {
@@ -1060,6 +1135,18 @@ struct ContentView: View {
         }
     }
 
+    private func routeBuilderHeight(for screenHeight: CGFloat, keyboardLift: CGFloat) -> CGFloat {
+        let normalHeight = routeBuilderHeight(for: screenHeight)
+        guard keyboardLift > 0 else {
+            return normalHeight
+        }
+
+        let gripAndChromeHeight: CGFloat = 6 + 34 + 1
+        let topMargin: CGFloat = 18
+        let availableHeight = screenHeight - keyboardLift - gripAndChromeHeight - topMargin
+        return max(180, min(normalHeight, availableHeight))
+    }
+
     private func routeBuilderVisibleHeight(for screenHeight: CGFloat, bottomInset: CGFloat) -> CGFloat {
         switch panelState {
             case .collapsed:
@@ -1201,8 +1288,19 @@ struct ContentView: View {
         let snapshot = rideNavigationSnapshot()
         appendNavigationDebugLog(snapshot: snapshot, mode: "navigation")
 
+        if snapshot.isOffRoute {
+            return makeNavStatePayload([
+                "mode": "destination",
+                "offRoute": true,
+                "distanceToDestinationMeters": snapshot.distanceToDestinationMeters,
+                "destinationBearingDegrees": snapshot.destinationBearingDegrees,
+                "tripProgressComplete": snapshot.tripProgressComplete
+            ])
+        }
+
         var fields: [String: Any] = [
             "mode": "navigation",
+            "offRoute": false,
             "maneuver": snapshot.maneuver.rawValue,
             "distanceToManeuverMeters": snapshot.distanceToManeuverMeters,
             "distanceToDestinationMeters": snapshot.distanceToDestinationMeters,
@@ -1232,6 +1330,7 @@ struct ContentView: View {
 
         return makeNavStatePayload([
             "mode": "destination",
+            "offRoute": snapshot.isOffRoute,
             "distanceToDestinationMeters": snapshot.distanceToDestinationMeters,
             "destinationBearingDegrees": snapshot.destinationBearingDegrees,
             "tripProgressComplete": snapshot.tripProgressComplete
@@ -1247,6 +1346,7 @@ struct ContentView: View {
             "toManeuver=\(formatDebugDistance(CLLocationDistance(snapshot.distanceToManeuverMeters)))",
             "toDest=\(formatDebugDistance(CLLocationDistance(snapshot.distanceToDestinationMeters)))",
             "routeProgress=\(formatDebugDistance(snapshot.routeProgressMeters))",
+            "routeGap=\(formatDebugDistance(snapshot.distanceToRouteMeters))",
             "selectedOffset=\(selectedOffset)",
             "selectedEnd=\(snapshot.selectedInstructionEndMeters.map(formatDebugDistance) ?? "none")",
             "selected='\(snapshot.selectedInstructionText)'",
@@ -1316,11 +1416,13 @@ struct ContentView: View {
                 maneuver: .continueAhead,
                 roundaboutExit: nil,
                 roundaboutExitAngles: [],
-            selectedInstructionText: "No route",
-            selectedInstructionOffsetMeters: nil,
-            selectedInstructionEndMeters: nil,
-            routeProgressMeters: 0,
-            selectionReason: "No route distance"
+                selectedInstructionText: "No route",
+                selectedInstructionOffsetMeters: nil,
+                selectedInstructionEndMeters: nil,
+                routeProgressMeters: 0,
+                distanceToRouteMeters: 0,
+                isOffRoute: false,
+                selectionReason: "No route distance"
             )
         }
 
@@ -1330,9 +1432,7 @@ struct ContentView: View {
             return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress, currentCoordinate: nil)
         }
 
-        guard let currentCoordinate = locationProvider.currentCoordinate,
-              let routeProgress = nearestRouteProgress(to: currentCoordinate),
-              routeProgress.distanceToRoute <= 100 else {
+        guard let currentCoordinate = locationProvider.currentCoordinate else {
             return RideNavigationSnapshot(
                 distanceToDestinationMeters: max(fallbackDistance, 0),
                 distanceToManeuverMeters: max(fallbackManeuver, 0),
@@ -1346,11 +1446,23 @@ struct ContentView: View {
                 selectedInstructionOffsetMeters: fallbackInstruction?.distanceFromLegStart,
                 selectedInstructionEndMeters: fallbackInstruction.map { $0.distanceFromLegStart + $0.distance },
                 routeProgressMeters: 0,
+                distanceToRouteMeters: 0,
+                isOffRoute: false,
                 selectionReason: "No nearby GPS/debug position"
             )
         }
 
-        return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress, currentCoordinate: currentCoordinate)
+        let routeProgress = nearestRouteProgress(to: currentCoordinate)
+        if routeProgress == nil || routeProgress!.distanceToRoute > offRouteThresholdMeters {
+            return offRouteSnapshot(
+                totalDistance: totalDistance,
+                currentCoordinate: currentCoordinate,
+                routeProgress: routeProgress,
+                reason: routeProgress.map { "Off route: \(formatDebugDistance($0.distanceToRoute)) from route" } ?? "Off route: no route projection"
+            )
+        }
+
+        return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress!, currentCoordinate: currentCoordinate)
     }
 
     private func rideNavigationSnapshot(totalDistance: CLLocationDistance, routeProgress: RouteProgress, currentCoordinate: CLLocationCoordinate2D?) -> RideNavigationSnapshot {
@@ -1389,7 +1501,38 @@ struct ContentView: View {
             selectedInstructionOffsetMeters: instruction?.distanceFromLegStart,
             selectedInstructionEndMeters: instruction.map { $0.distanceFromLegStart + $0.distance },
             routeProgressMeters: routeProgress.distanceFromRouteStart,
+            distanceToRouteMeters: routeProgress.distanceToRoute,
+            isOffRoute: false,
             selectionReason: selectionReason
+        )
+    }
+
+    private var offRouteThresholdMeters: CLLocationDistance {
+        65
+    }
+
+    private func offRouteSnapshot(totalDistance: CLLocationDistance, currentCoordinate: CLLocationCoordinate2D, routeProgress: RouteProgress?, reason: String) -> RideNavigationSnapshot {
+        let routeProgressMeters = routeProgress?.distanceFromRouteStart ?? nearestCurrentRouteDistance() ?? 0
+        let remainingDistance = distanceToDestination(from: currentCoordinate)
+        let tripProgress = totalDistance > 0 ? Int(((routeProgressMeters / totalDistance) * 100).rounded()) : 0
+        let destinationBearing = relativeDestinationBearingForOffRoute(from: currentCoordinate, routeProgress: routeProgress)
+
+        return RideNavigationSnapshot(
+            distanceToDestinationMeters: Int(max(remainingDistance, 0).rounded()),
+            distanceToManeuverMeters: Int(max(remainingDistance, 0).rounded()),
+            destinationBearingDegrees: destinationBearing,
+            tripProgressComplete: max(0, min(100, tripProgress)),
+            maneuverProgressRemaining: -1,
+            maneuver: .continueAhead,
+            roundaboutExit: nil,
+            roundaboutExitAngles: [],
+            selectedInstructionText: "Off route",
+            selectedInstructionOffsetMeters: nil,
+            selectedInstructionEndMeters: nil,
+            routeProgressMeters: routeProgressMeters,
+            distanceToRouteMeters: routeProgress?.distanceToRoute ?? -1,
+            isOffRoute: true,
+            selectionReason: reason
         )
     }
 
@@ -1492,6 +1635,25 @@ struct ContentView: View {
         }
 
         return coordinate.bearingDegrees(to: destination)
+    }
+
+    private func distanceToDestination(from coordinate: CLLocationCoordinate2D) -> CLLocationDistance {
+        guard let destination = waypoints.last?.coordinate else {
+            return totalRouteDistance
+        }
+
+        return CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
+    }
+
+    private func relativeDestinationBearingForOffRoute(from coordinate: CLLocationCoordinate2D, routeProgress: RouteProgress?) -> Int {
+        let destinationBearing = Double(destinationBearing(from: coordinate))
+        let riderBearing = locationProvider.currentCourseDegrees ?? routeProgress?.routeBearingDegrees ?? destinationBearing
+        let relativeBearing = normalizedBearing(destinationBearing - riderBearing)
+        let smoothedBearing = smoothedBearing(from: smoothedDestinationBearing, to: relativeBearing, alpha: 0.35)
+        smoothedDestinationBearing = smoothedBearing
+
+        return Int(smoothedBearing.rounded()) % 360
     }
 
     private func relativeDestinationBearing(from coordinate: CLLocationCoordinate2D, routeProgress: RouteProgress) -> Int {
@@ -1664,6 +1826,24 @@ struct ContentView: View {
                     searchMessage = "Search failed. Try a more specific place name."
                 }
             }
+        }
+    }
+
+    private func showSearchEditor() {
+        withAnimation(.snappy(duration: 0.22)) {
+            searchEditorPresented = true
+            panelState = .medium
+        }
+
+        DispatchQueue.main.async {
+            searchFocused = true
+        }
+    }
+
+    private func hideSearchEditor() {
+        searchFocused = false
+        withAnimation(.snappy(duration: 0.22)) {
+            searchEditorPresented = false
         }
     }
 
@@ -2185,6 +2365,22 @@ private struct DebugRidePositionPin: View {
     }
 }
 
+private struct RidePositionPin: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.cyan.opacity(0.24))
+                .frame(width: 34, height: 34)
+
+            Circle()
+                .fill(Color.cyan)
+                .frame(width: 14, height: 14)
+                .overlay(Circle().stroke(Color.white, lineWidth: 3))
+        }
+        .shadow(color: .black.opacity(0.32), radius: 6, y: 3)
+    }
+}
+
 private struct TargetPin: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -2357,6 +2553,8 @@ private struct MapKitDebugSheet: View {
                     DebugValueRow(label: "Roundabout exit", value: snapshot.roundaboutExit.map(String.init) ?? "none")
                     DebugValueRow(label: "Roundabout angles", value: anglesText(snapshot.roundaboutExitAngles))
                     DebugValueRow(label: "Route progress", value: distanceFormatter(snapshot.routeProgressMeters))
+                    DebugValueRow(label: "Route gap", value: snapshot.distanceToRouteMeters >= 0 ? distanceFormatter(snapshot.distanceToRouteMeters) : "unknown")
+                    DebugValueRow(label: "Off route", value: snapshot.isOffRoute ? "yes" : "no")
                     DebugValueRow(label: "Selected offset", value: snapshot.selectedInstructionOffsetMeters.map(distanceFormatter) ?? "none")
                     DebugValueRow(label: "Selected source", value: snapshot.selectedInstructionText)
                     DebugValueRow(label: "Decision", value: snapshot.selectionReason)
@@ -2548,6 +2746,8 @@ private struct RideNavigationSnapshot {
     let selectedInstructionOffsetMeters: CLLocationDistance?
     let selectedInstructionEndMeters: CLLocationDistance?
     let routeProgressMeters: CLLocationDistance
+    let distanceToRouteMeters: CLLocationDistance
+    let isOffRoute: Bool
     let selectionReason: String
 }
 
@@ -3203,15 +3403,18 @@ private final class LocationProvider: NSObject, ObservableObject, CLLocationMana
 
     func startRideTracking() {
         shouldTrackRide = true
-        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-        manager.distanceFilter = 10
-        manager.allowsBackgroundLocationUpdates = true
+        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        manager.distanceFilter = 5
         manager.pausesLocationUpdatesAutomatically = false
 
         switch manager.authorizationStatus {
             case .notDetermined:
                 manager.requestWhenInUseAuthorization()
-            case .authorizedAlways, .authorizedWhenInUse:
+            case .authorizedAlways:
+                configureBackgroundLocationIfAvailable()
+                manager.startUpdatingLocation()
+            case .authorizedWhenInUse:
+                manager.requestAlwaysAuthorization()
                 manager.startUpdatingLocation()
             case .denied, .restricted:
                 break
@@ -3235,6 +3438,9 @@ private final class LocationProvider: NSObject, ObservableObject, CLLocationMana
         }
 
         if shouldTrackRide {
+            if manager.authorizationStatus == .authorizedAlways {
+                configureBackgroundLocationIfAvailable()
+            }
             manager.startUpdatingLocation()
         } else {
             manager.requestLocation()
@@ -3255,6 +3461,26 @@ private final class LocationProvider: NSObject, ObservableObject, CLLocationMana
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    }
+
+    private func configureBackgroundLocationIfAvailable() {
+        guard backgroundLocationModeDeclared else {
+            return
+        }
+
+        manager.allowsBackgroundLocationUpdates = true
+    }
+
+    private var backgroundLocationModeDeclared: Bool {
+        if let modes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] {
+            return modes.contains("location")
+        }
+
+        if let mode = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? String {
+            return mode.contains("location")
+        }
+
+        return false
     }
 }
 
@@ -3307,10 +3533,10 @@ private struct StartRideButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.black)
+            .foregroundStyle(.white)
             .padding(.horizontal, 18)
             .frame(height: 44)
-            .background(Color.cyan.opacity(configuration.isPressed ? 0.72 : 0.92), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(Color.cyan.opacity(configuration.isPressed ? 0.62 : 0.78), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .opacity(configuration.isPressed ? 0.86 : 1)
     }
 }
@@ -3321,11 +3547,11 @@ private struct RideModeButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.caption.weight(.semibold))
-            .foregroundStyle(isSelected ? .black : .white)
+            .foregroundStyle(.white)
             .padding(.horizontal, 8)
             .frame(height: 34)
             .background(
-                isSelected ? Color.cyan.opacity(configuration.isPressed ? 0.78 : 0.94) : Color.white.opacity(configuration.isPressed ? 0.14 : 0.07),
+                isSelected ? Color.cyan.opacity(configuration.isPressed ? 0.56 : 0.72) : Color.white.opacity(configuration.isPressed ? 0.14 : 0.07),
                 in: RoundedRectangle(cornerRadius: 7, style: .continuous)
             )
     }
