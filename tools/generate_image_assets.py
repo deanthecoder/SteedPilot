@@ -18,6 +18,7 @@ HEADER = """// Code authored by Dean Edis (DeanTheCoder).
 ROOT = Path(__file__).resolve().parents[1]
 OUT_HEADER = ROOT / "include" / "SteedPilot" / "ImageAssets.h"
 OUT_SOURCE = ROOT / "src" / "generated" / "ImageAssets.c"
+DIRECTION_IMAGE_SCALE = 0.9
 IMAGES = [
     {
         "name": "SteedPilotDtcLogo",
@@ -144,7 +145,12 @@ def apply_transparent_black(image):
 
 def fit_to_canvas(image, definition):
     if "fit_size" in definition:
-        image.thumbnail(definition["fit_size"], Image.Resampling.LANCZOS)
+        fit_width, fit_height = definition["fit_size"]
+        if definition["source"].is_relative_to(ROOT / "img" / "directions"):
+            fit_width = int(fit_width * DIRECTION_IMAGE_SCALE)
+            fit_height = int(fit_height * DIRECTION_IMAGE_SCALE)
+
+        image.thumbnail((fit_width, fit_height), Image.Resampling.LANCZOS)
 
     if "canvas_size" not in definition:
         return image
