@@ -3909,11 +3909,29 @@ private final class KeyboardObserver: ObservableObject {
 }
 
 private struct SecondaryRouteButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(configuration.role == .destructive ? .red : .cyan)
-            .opacity(configuration.isPressed ? 0.6 : 1)
+            .foregroundStyle(foregroundStyle(role: configuration.role))
+            .opacity(opacity(isPressed: configuration.isPressed))
+    }
+
+    private func foregroundStyle(role: ButtonRole?) -> Color {
+        if !isEnabled {
+            return .secondary
+        }
+
+        return role == .destructive ? .red : .cyan
+    }
+
+    private func opacity(isPressed: Bool) -> Double {
+        if !isEnabled {
+            return 0.45
+        }
+
+        return isPressed ? 0.6 : 1
     }
 }
 
