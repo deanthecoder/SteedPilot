@@ -1614,8 +1614,8 @@ struct ContentView: View {
             relativeDestinationBearing(from: $0, routeProgress: routeProgress)
         } ?? relativeDestinationBearing(routeProgress: routeProgress)
         let isArriving = remainingDistance <= 40 || (instruction?.maneuver == .arrive && remainingManeuver <= 40)
-        let continueThresholdMeters: CLLocationDistance = 200
-        let shouldContinue = !isArriving && !instructionIsActive && remainingManeuver > continueThresholdMeters
+        let continueThresholdMeters: CLLocationDistance = 1609.344
+        let shouldContinue = !isArriving && remainingManeuver > continueThresholdMeters
         let maneuver = isArriving ? DeviceManeuver.arrive : (shouldContinue ? .continueAhead : (instruction?.maneuver ?? .continueAhead))
         let selectionReason = isArriving ? "Arriving" : (shouldContinue ? "Synthetic continue: selected instruction is over \(Int(continueThresholdMeters))m away" : "Selected instruction")
 
