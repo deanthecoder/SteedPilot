@@ -2941,6 +2941,10 @@ private struct RouteInstruction {
     }
 
     static func normalizedManeuver(_ maneuver: DeviceManeuver, roundaboutExit: Int?, roundaboutExitAngles: [RoundaboutExitAngle], incomingBearing: Int?, outgoingBearing: Int?) -> DeviceManeuver {
+        guard maneuver != .roundabout || roundaboutExit != nil else {
+            return fallbackManeuver(incomingBearing: incomingBearing, outgoingBearing: outgoingBearing)
+        }
+
         guard maneuver == .roundabout,
               roundaboutExit == 1 else {
             return maneuver
@@ -2951,6 +2955,27 @@ private struct RouteInstruction {
         }
 
         return maneuver
+    }
+
+    private static func fallbackManeuver(incomingBearing: Int?, outgoingBearing: Int?) -> DeviceManeuver {
+        guard let angle = relativeAngle(incomingBearing: incomingBearing, outgoingBearing: outgoingBearing) else {
+            return .continueAhead
+        }
+
+        if angle < -60 {
+            return .turnLeft
+        }
+        if angle < -20 {
+            return .slightLeft
+        }
+        if angle > 60 {
+            return .turnRight
+        }
+        if angle > 20 {
+            return .slightRight
+        }
+
+        return .continueAhead
     }
 
     private static func relativeExitAngle(exit: Int, incomingBearing: Int?, outgoingBearing: Int?) -> Int? {
