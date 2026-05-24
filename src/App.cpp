@@ -499,6 +499,11 @@ void App::tick(uint32_t elapsedMs) {
     _displayManeuverProgress = easedProgress(_displayManeuverProgress, _state.maneuverProgressRemaining, elapsedMs);
 }
 
+bool App::isAnimating() const {
+    return (_state.tripProgressComplete >= 0 && _displayTripProgress >= 0.0f && std::fabs(_displayTripProgress - (float)_state.tripProgressComplete) > 0.5f)
+        || (_state.maneuverProgressRemaining >= 0 && _displayManeuverProgress >= 0.0f && std::fabs(_displayManeuverProgress - (float)_state.maneuverProgressRemaining) > 0.5f);
+}
+
 void App::render(Display& display) {
     switch (_state.mode) {
         case DisplayMode::Destination:
@@ -520,6 +525,17 @@ void App::render(Display& display) {
     }
 
     display.present();
+}
+
+void App::renderProgressAnimation(Display& display) {
+    if (_state.mode == DisplayMode::Navigation && _state.maneuver != Maneuver::Arrive) {
+        drawTripProgressArc(display, _displayTripProgress);
+        drawManeuverProgressArc(display, _displayManeuverProgress);
+        display.present();
+    } else if (_state.mode == DisplayMode::Destination) {
+        drawTripProgressArc(display, _displayTripProgress);
+        display.present();
+    }
 }
 
 void App::renderNavigation(Display& display) {

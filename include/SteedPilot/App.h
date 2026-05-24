@@ -47,11 +47,25 @@ public:
     void tick(uint32_t elapsedMs);
 
     /**
+     * Reports whether animated UI values are still easing toward their targets.
+     *
+     * @return True when another animation frame should be rendered.
+     */
+    bool isAnimating() const;
+
+    /**
      * Renders the active display mode to the supplied display.
      *
      * @param display Rendering target used by either the simulator or firmware.
      */
     void render(Display& display);
+
+    /**
+     * Renders only animated progress elements over the current display contents.
+     *
+     * @param display Rendering target used by the firmware animation loop.
+     */
+    void renderProgressAnimation(Display& display);
 
 private:
     UnitSettings _units;

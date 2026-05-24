@@ -22,6 +22,7 @@ constexpr uint32_t SplashHoldMs = 2000;
 constexpr uint32_t SplashFadeOutMs = 900;
 constexpr uint32_t SplashTotalMs = SplashFadeInMs + SplashHoldMs + SplashFadeOutMs;
 constexpr uint32_t NoPhoneTimeoutMs = 10000;
+constexpr uint32_t AnimationFrameMs = 16;
 
 FirmwareDisplay display;
 FirmwareBle ble;
@@ -204,6 +205,7 @@ void setup() {
 
 void loop() {
     static uint32_t lastTick = millis();
+    static uint32_t lastAnimationFrameMs = 0;
     const uint32_t now = millis();
 
     app.tick(now - lastTick);
@@ -241,6 +243,11 @@ void loop() {
         } else {
             Serial.println("BLE update ignored before full state");
         }
+    }
+
+    if (!pendingBleState && !noPhoneVisible && app.isAnimating() && now - lastAnimationFrameMs >= AnimationFrameMs) {
+        app.renderProgressAnimation(display);
+        lastAnimationFrameMs = now;
     }
 
     if (liveBleMode && !pendingBleState && !noPhoneVisible && now - lastPacketMs >= NoPhoneTimeoutMs) {
