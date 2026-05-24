@@ -1358,7 +1358,7 @@ struct ContentView: View {
         if routeActive {
             sendRideUpdate()
         } else {
-            sender.send(NavFixtures.heartbeat)
+            sender.send(NavFixtures.clearRoute)
         }
     }
 
