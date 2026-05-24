@@ -1324,13 +1324,20 @@ struct ContentView: View {
     }
 
     private func endRoute() {
-        sender.send(NavFixtures.clearRoute)
+        stopActiveRoute(sendClear: true)
+        panelState = .medium
+    }
+
+    private func stopActiveRoute(sendClear: Bool) {
+        if sendClear {
+            sender.send(NavFixtures.clearRoute)
+        }
+
+        routeActive = false
         locationProvider.stopRideTracking()
         smoothedDestinationBearing = nil
         debugRideDistanceMeters = nil
-        routeActive = false
         UIApplication.shared.isIdleTimerDisabled = false
-        panelState = .medium
     }
 
     private func sendRideUpdate() {
@@ -2152,9 +2159,9 @@ struct ContentView: View {
 
     private func clearPlannedRoute() {
         routeCalculationTask?.cancel()
+        stopActiveRoute(sendClear: routeActive)
         waypoints = []
         routeLegs = []
-        routeActive = false
         selectedTarget = nil
         searchMessage = nil
         finishWaypointReorder()
@@ -2373,11 +2380,11 @@ struct ContentView: View {
 
     private func restoreSavedRoute(_ route: SavedRoute) {
         routeCalculationTask?.cancel()
+        stopActiveRoute(sendClear: routeActive)
         let restoredWaypoints = route.routeWaypoints
         waypoints = restoredWaypoints
         normalizeRouteWaypoints()
         routeLegs = []
-        routeActive = false
         selectedTarget = nil
         searchMessage = nil
         finishWaypointReorder()
