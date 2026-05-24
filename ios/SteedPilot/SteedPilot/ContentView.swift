@@ -221,6 +221,13 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 RouteStat(icon: "point.topleft.down.curvedto.point.bottomright.up", value: routeDistanceText, label: "Distance")
                 RouteStat(icon: "clock", value: routeTravelTimeText, label: "Ride time")
+
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(connectionColor)
+                    .accessibilityLabel("SteedPilot \(sender.status)")
+                    .frame(width: 28, height: 28)
+                    .padding(.trailing, 12)
             }
             .padding(.vertical, 9)
         }
@@ -254,12 +261,6 @@ struct ContentView: View {
 
     private var mapControls: some View {
         VStack(spacing: 10) {
-            Button(action: {}) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .accessibilityLabel("SteedPilot \(sender.status)")
-            }
-            .buttonStyle(ConnectionMapButtonStyle(color: connectionColor))
-
             Button(action: recenterMap) {
                 Image(systemName: "location.fill")
             }
@@ -3811,19 +3812,6 @@ private struct FloatingMapButtonStyle: ButtonStyle {
             .frame(width: 46, height: 46)
             .background(Color.black.opacity(configuration.isPressed ? 0.72 : 0.58), in: Circle())
             .overlay(Circle().stroke(Color.white.opacity(0.10), lineWidth: 1))
-    }
-}
-
-private struct ConnectionMapButtonStyle: ButtonStyle {
-    let color: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.headline)
-            .foregroundStyle(color)
-            .frame(width: 46, height: 46)
-            .background(Color.black.opacity(configuration.isPressed ? 0.72 : 0.58), in: Circle())
-            .overlay(Circle().stroke(color.opacity(0.50), lineWidth: 1.5))
     }
 }
 
