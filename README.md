@@ -248,7 +248,6 @@ Early planning and prototyping.
 - I'd like to support offline usage, if possible.
 - We should ideally allow route recalculation.
 - Think about traffic reporting.
-- Must support route planning that avoids motorways. (I only have CBT license)
 - When destination is reached, show route summary. Time, distance, average speed(?), times speed limit was exceeded
 - Detect genuine road bends from route geometry, rather than treating "keep left" style lane or branch instructions as bends.
 - Source speed limit data so the device can show the red speed warning ring reliably.

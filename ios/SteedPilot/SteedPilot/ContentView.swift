@@ -45,6 +45,10 @@ struct ContentView: View {
     @State private var navigationDebugLog: [String] = []
     @State private var saveRouteName = ""
     @State private var savedRoutes: [SavedRoute] = []
+    @State private var homeLocation: SavedRoutePoint?
+    @State private var homeSearchText = ""
+    @State private var homeMessage: String?
+    @State private var isSearchingHome = false
     @AppStorage("SteedPilot.distanceUnitPreference") private var distanceUnitPreferenceRaw = DistanceUnitPreference.miles.rawValue
     @AppStorage("SteedPilot.avoidMotorways") private var avoidMotorways = false
     @AppStorage("SteedPilot.mapStyle") private var selectedMapStyleRaw = MapStyleOption.standard.rawValue
@@ -300,6 +304,7 @@ struct ContentView: View {
 
                 VStack(spacing: 12) {
                     placeSearchRow
+                    homeQuickStartRow
                     selectedTargetRow
                     routeBuilderActions
                     waypointEditList
@@ -802,6 +807,41 @@ struct ContentView: View {
                     Toggle("Avoid motorways", isOn: $avoidMotorways)
                 }
 
+                Section("Home") {
+                    HStack {
+                        TextField(homeLocation?.name ?? "Search home location", text: $homeSearchText)
+                            .textInputAutocapitalization(.words)
+                            .disableAutocorrection(true)
+
+                        Button {
+                            setHomeFromSearch()
+                        } label: {
+                            Image(systemName: "arrow.forward.circle.fill")
+                        }
+                        .disabled(homeSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSearchingHome)
+                        .accessibilityLabel("Set home")
+
+                        if homeLocation != nil {
+                            Button(role: .destructive, action: clearHomeLocation) {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .accessibilityLabel("Clear home")
+                        }
+                    }
+
+                    Button("Set from current location") {
+                        setHomeFromCurrentLocation()
+                    }
+
+                    if isSearchingHome {
+                        ProgressView()
+                    } else if let homeMessage {
+                        Text(homeMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Speed warning") {
                     Stepper(value: $speedWarningLimitMph, in: 20...100, step: 5) {
                         HStack {
@@ -1006,6 +1046,40 @@ struct ContentView: View {
         .buttonStyle(.plain)
     }
 
+    @ViewBuilder
+    private var homeQuickStartRow: some View {
+        if waypoints.isEmpty, let homeLocation {
+            Button(action: addHomeStartToRoute) {
+                HStack(spacing: 10) {
+                    Image(systemName: "house.fill")
+                        .foregroundStyle(.cyan)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Start from home")
+                            .font(.subheadline.weight(.semibold))
+                        Text(homeLocation.name)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundStyle(.cyan)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     private var connectionColor: Color {
         sender.isConnected ? .green : .red
     }
@@ -1206,6 +1280,7 @@ struct ContentView: View {
 
     private func configureView() {
         loadSavedRoutes()
+        loadHomeLocation()
     }
 
     private func endRoute() {
@@ -1847,6 +1922,16 @@ struct ContentView: View {
         }
     }
 
+    private func addHomeStartToRoute() {
+        guard waypoints.isEmpty, let homeLocation else {
+            return
+        }
+
+        waypoints.append(RouteWaypoint(kind: .start, number: nil, name: homeLocation.name, coordinate: homeLocation.coordinate))
+        normalizeRouteWaypoints()
+        centerMap(on: homeLocation.coordinate, span: SampleRoute.localSpan)
+    }
+
     private func addSelectedTargetToRoute() {
         guard let selectedTarget, !isAddingRouteTarget else {
             return
@@ -2150,6 +2235,80 @@ struct ContentView: View {
         showingSettings = true
     }
 
+    private func setHomeFromSearch() {
+        let query = homeSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, !isSearchingHome else {
+            return
+        }
+
+        isSearchingHome = true
+        homeMessage = nil
+
+        Task {
+            let request = MKLocalSearch.Request()
+            request.naturalLanguageQuery = query
+            if let region = cameraPosition.region {
+                request.region = region
+            }
+
+            do {
+                let response = try await MKLocalSearch(request: request).start()
+                guard let mapItem = response.mapItems.first else {
+                    await MainActor.run {
+                        isSearchingHome = false
+                        homeMessage = "No places found for \"\(query)\"."
+                    }
+                    return
+                }
+
+                let point = SavedRoutePoint(
+                    name: mapItem.name ?? query,
+                    latitude: mapItem.placemark.coordinate.latitude,
+                    longitude: mapItem.placemark.coordinate.longitude
+                )
+                await MainActor.run {
+                    saveHomeLocation(point)
+                    homeSearchText = ""
+                    homeMessage = nil
+                    isSearchingHome = false
+                }
+            } catch {
+                await MainActor.run {
+                    isSearchingHome = false
+                    homeMessage = "Home search failed. Try a more specific place name."
+                }
+            }
+        }
+    }
+
+    private func setHomeFromCurrentLocation() {
+        guard let coordinate = locationProvider.currentCoordinate else {
+            pendingLocationRecenter = true
+            locationProvider.requestCurrentLocation()
+            homeMessage = "Waiting for current location."
+            return
+        }
+
+        isSearchingHome = true
+        homeMessage = nil
+
+        Task {
+            let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            let name = (try? await CLGeocoder().reverseGeocodeLocation(location).first?.name) ?? "Current Location"
+            await MainActor.run {
+                saveHomeLocation(SavedRoutePoint(name: name, latitude: coordinate.latitude, longitude: coordinate.longitude))
+                homeMessage = nil
+                isSearchingHome = false
+            }
+        }
+    }
+
+    private func clearHomeLocation() {
+        homeLocation = nil
+        homeMessage = nil
+        UserDefaults.standard.removeObject(forKey: SavedRoutePoint.homeStorageKey)
+    }
+
     private func savePlannedRoute() {
         let trimmedName = saveRouteName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, waypoints.count > 1 else {
@@ -2190,6 +2349,24 @@ struct ContentView: View {
         }
 
         savedRoutes = routes
+    }
+
+    private func loadHomeLocation() {
+        guard let data = UserDefaults.standard.data(forKey: SavedRoutePoint.homeStorageKey),
+              let point = try? JSONDecoder().decode(SavedRoutePoint.self, from: data) else {
+            return
+        }
+
+        homeLocation = point
+    }
+
+    private func saveHomeLocation(_ point: SavedRoutePoint) {
+        homeLocation = point
+        guard let data = try? JSONEncoder().encode(point) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: SavedRoutePoint.homeStorageKey)
     }
 
     private func persistSavedRoutes() {
@@ -2506,6 +2683,8 @@ private struct SavedRoute: Codable, Identifiable {
 }
 
 private struct SavedRoutePoint: Codable {
+    static let homeStorageKey = "SteedPilot.homeLocation"
+
     let name: String
     let latitude: CLLocationDegrees
     let longitude: CLLocationDegrees
