@@ -177,7 +177,7 @@ void renderWaitingForRoute() {
     state.linkState = SteedPilot::LinkState::Connected;
     app.setState(state);
     app.render(display);
-    noPhoneVisible = true;
+    noPhoneVisible = false;
     Serial.println("Waiting-for-route screen rendered");
 }
 

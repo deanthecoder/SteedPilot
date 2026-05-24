@@ -15,6 +15,7 @@ import SwiftUI
 import UIKit
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var sender = BluetoothNavSender()
     @StateObject private var locationProvider = LocationProvider()
     @StateObject private var keyboard = KeyboardObserver()
@@ -116,7 +117,14 @@ struct ContentView: View {
                     return
                 }
 
-                sendRideUpdate()
+                pingDevice()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else {
+                    return
+                }
+
+                pingDevice()
             }
             .onChange(of: routeActive) { _, isActive in
                 UIApplication.shared.isIdleTimerDisabled = isActive
@@ -1281,6 +1289,7 @@ struct ContentView: View {
     private func configureView() {
         loadSavedRoutes()
         loadHomeLocation()
+        pingDevice()
     }
 
     private func endRoute() {
@@ -1304,6 +1313,14 @@ struct ContentView: View {
         }
 
         sender.send(payload)
+    }
+
+    private func pingDevice() {
+        if routeActive {
+            sendRideUpdate()
+        } else {
+            sender.send(NavFixtures.heartbeat)
+        }
     }
 
     private var totalRouteDistance: CLLocationDistance {
