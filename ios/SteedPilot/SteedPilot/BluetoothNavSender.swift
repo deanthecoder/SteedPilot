@@ -25,9 +25,11 @@ final class BluetoothNavSender: NSObject, ObservableObject {
     private var characteristic: CBCharacteristic?
     private var pendingPayloads: [Data] = []
     private var packet = Data()
+    private var currentPayload: Data?
     private var offset = 0
     private var isWriting = false
     private var heartbeatTimer: Timer?
+    private var writeTimeoutTimer: Timer?
     private var replayWorkItems: [DispatchWorkItem] = []
     private var isConnecting = false
 
@@ -130,6 +132,7 @@ final class BluetoothNavSender: NSObject, ObservableObject {
         }
 
         let payload = pendingPayloads.removeFirst()
+        currentPayload = payload
         packet = payload
         packet.append(0x0A)
         offset = 0
@@ -151,14 +154,59 @@ final class BluetoothNavSender: NSObject, ObservableObject {
         if offset >= packet.count {
             status = "Sent"
             isWriting = false
+            currentPayload = nil
+            stopWriteTimeoutTimer()
             sendNextPayload(to: characteristic)
             return
         }
 
         let chunkSize = min(128, max(20, peripheral.maximumWriteValueLength(for: .withResponse)))
         let end = min(offset + chunkSize, packet.count)
+        startWriteTimeoutTimer()
         peripheral.writeValue(packet.subdata(in: offset..<end), for: characteristic, type: .withResponse)
         offset = end
+    }
+
+    /**
+     * Starts a guard timer for write-with-response callbacks.
+     */
+    private func startWriteTimeoutTimer() {
+        writeTimeoutTimer?.invalidate()
+        writeTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
+            self?.handleWriteTimeout()
+        }
+    }
+
+    /**
+     * Stops the active write timeout timer.
+     */
+    private func stopWriteTimeoutTimer() {
+        writeTimeoutTimer?.invalidate()
+        writeTimeoutTimer = nil
+    }
+
+    /**
+     * Reconnects and retries when a write acknowledgement never arrives.
+     */
+    private func handleWriteTimeout() {
+        if let currentPayload {
+            pendingPayloads.insert(currentPayload, at: 0)
+        }
+
+        packet = Data()
+        currentPayload = nil
+        offset = 0
+        isWriting = false
+        isConnected = false
+        characteristic = nil
+        status = "Reconnecting"
+        stopHeartbeatTimer()
+
+        if let central, let peripheral {
+            central.cancelPeripheralConnection(peripheral)
+        } else {
+            scanForSteedPilot()
+        }
     }
 
     /**
@@ -177,6 +225,21 @@ final class BluetoothNavSender: NSObject, ObservableObject {
     private func stopHeartbeatTimer() {
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
+    }
+
+    /**
+     * Clears the active write state when the connection drops.
+     */
+    private func clearWriteState(requeueCurrentPayload: Bool) {
+        stopWriteTimeoutTimer()
+        if requeueCurrentPayload, let currentPayload {
+            pendingPayloads.insert(currentPayload, at: 0)
+        }
+
+        packet = Data()
+        currentPayload = nil
+        offset = 0
+        isWriting = false
     }
 }
 
@@ -214,6 +277,7 @@ extension BluetoothNavSender: CBCentralManagerDelegate {
         isConnected = false
         isConnecting = false
         characteristic = nil
+        clearWriteState(requeueCurrentPayload: true)
         stopHeartbeatTimer()
         scanForSteedPilot()
     }
@@ -270,9 +334,11 @@ extension BluetoothNavSender: CBPeripheralDelegate {
         if error != nil {
             status = "Write failed"
             isConnected = peripheral.state == .connected
+            clearWriteState(requeueCurrentPayload: true)
             return
         }
 
+        stopWriteTimeoutTimer()
         writeNextChunk()
     }
 }
