@@ -3174,18 +3174,14 @@ private struct RouteInstruction {
 
         let targetAngle = relativeExitAngle(exit: exit, incomingBearing: incomingBearing, outgoingBearing: outgoingBearing)
         let target = normalizedRoundaboutTargetAngle(targetAngle, exit: exit)
-        let entryAngle = 180
-        var sweep = normalizePositiveDegrees(target) - entryAngle
-        if sweep <= 0 {
-            sweep += 360
-        }
-        if exit > 1 && sweep < exit * 45 {
-            sweep += 360
+        guard exit > 1 else {
+            return [RoundaboutExitAngle(index: 1, angleDegrees: target)]
         }
 
+        let firstSkippedExit = min(-110, target - 45)
         return (0..<exit).map { index in
-            let ratio = Double(index + 1) / Double(exit)
-            let angle = normalizedSignedAngle(Int((Double(entryAngle) + (Double(sweep) * ratio)).rounded()))
+            let ratio = Double(index) / Double(exit - 1)
+            let angle = normalizedSignedAngle(Int((Double(firstSkippedExit) + (Double(target - firstSkippedExit) * ratio)).rounded()))
             return RoundaboutExitAngle(index: index + 1, angleDegrees: angle)
         }
     }
@@ -3198,6 +3194,10 @@ private struct RouteInstruction {
 
         if exit >= 3 && abs(targetAngle) < 35 {
             return fallback
+        }
+
+        if exit == 2 && targetAngle < -90 {
+            return normalizedSignedAngle(180 + ((normalizePositiveDegrees(targetAngle) - 180 + 360) / 2))
         }
 
         return clamp(targetAngle, min: -150, max: 150)
