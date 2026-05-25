@@ -44,7 +44,11 @@ final class BluetoothNavSender: NSObject, ObservableObject {
      * - Parameter payload: JSON payload bytes.
      */
     func send(_ payload: Data) {
-        pendingPayloads.append(payload)
+        if isReplaying {
+            pendingPayloads.append(payload)
+        } else {
+            pendingPayloads = [payload]
+        }
 
         if let peripheral, let characteristic, peripheral.state == .connected {
             sendNextPayload(to: characteristic)
@@ -57,6 +61,22 @@ final class BluetoothNavSender: NSObject, ObservableObject {
         }
 
         scanForSteedPilot()
+    }
+
+    /**
+     * Sends a heartbeat only when the link is otherwise idle.
+     */
+    private func sendHeartbeat() {
+        guard !isWriting,
+              pendingPayloads.isEmpty,
+              let peripheral,
+              let characteristic,
+              peripheral.state == .connected else {
+            return
+        }
+
+        pendingPayloads.append(NavFixtures.heartbeat)
+        sendNextPayload(to: characteristic)
     }
 
     /**
@@ -215,7 +235,7 @@ final class BluetoothNavSender: NSObject, ObservableObject {
     private func startHeartbeatTimer() {
         heartbeatTimer?.invalidate()
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
-            self?.send(NavFixtures.heartbeat)
+            self?.sendHeartbeat()
         }
     }
 

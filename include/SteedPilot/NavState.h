@@ -25,6 +25,7 @@ enum class DisplayMode {
 enum class Maneuver {
     Continue,
     BendLeft,
+    BendRight,
     ExitLeft,
     SlightLeft,
     TurnLeft,

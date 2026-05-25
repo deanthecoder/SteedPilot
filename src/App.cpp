@@ -341,6 +341,10 @@ void drawRoundabout(Display& display, int cx, int cy, const NavState& state) {
     display.fillCircle(targetOuterX, targetOuterY, 7, Palette::Cyan);
 }
 
+void drawRoundaboutEntryStub(Display& display, int cx, int cy) {
+    display.line(cx, cy + 54, cx, cy + 92, Color{230, 230, 230}, 9);
+}
+
 void drawRoundaboutBitmap(Display& display, int cx, int cy, const NavState& state) {
     const int exitCount = state.roundaboutExitCount > 0 ? state.roundaboutExitCount : 4;
     const int targetExit = state.roundaboutExit > 0 ? state.roundaboutExit : 1;
@@ -364,6 +368,7 @@ void drawRoundaboutBitmap(Display& display, int cx, int cy, const NavState& stat
     }
 
     drawImageTransformed(display, cx, cy, SteedPilotRoundaboutRoute, targetDegrees);
+    drawRoundaboutEntryStub(display, cx, cy);
 }
 
 void drawDirectionBitmap(Display& display, int cx, int cy, Maneuver maneuver) {
@@ -373,6 +378,9 @@ void drawDirectionBitmap(Display& display, int cx, int cy, Maneuver maneuver) {
             break;
         case Maneuver::BendLeft:
             drawImageTransformed(display, cx, cy, SteedPilotDirectionBendLeft);
+            break;
+        case Maneuver::BendRight:
+            drawImageTransformed(display, cx, cy, SteedPilotDirectionBendLeft, 0.0f, true);
             break;
         case Maneuver::ExitLeft:
             drawImageTransformed(display, cx, cy, SteedPilotDirectionExitLeft);
@@ -409,6 +417,7 @@ void drawDirectionBitmap(Display& display, int cx, int cy, Maneuver maneuver) {
 const char* maneuverLabel(Maneuver maneuver) {
     switch (maneuver) {
         case Maneuver::BendLeft: return "BEND IN";
+        case Maneuver::BendRight: return "BEND IN";
         case Maneuver::ExitLeft: return "EXIT LEFT IN";
         case Maneuver::SlightLeft: return "SLIGHT LEFT IN";
         case Maneuver::TurnLeft: return "LEFT IN";
@@ -425,7 +434,32 @@ const char* maneuverLabel(Maneuver maneuver) {
     }
 }
 
+const char* immediateManeuverLabel(Maneuver maneuver) {
+    switch (maneuver) {
+        case Maneuver::BendLeft: return "BEND NOW";
+        case Maneuver::BendRight: return "BEND NOW";
+        case Maneuver::ExitLeft: return "EXIT LEFT";
+        case Maneuver::SlightLeft: return "SLIGHT LEFT";
+        case Maneuver::TurnLeft: return "LEFT";
+        case Maneuver::SharpLeft: return "SHARP LEFT";
+        case Maneuver::UTurn: return "U TURN";
+        case Maneuver::ExitRight: return "EXIT RIGHT";
+        case Maneuver::SlightRight: return "SLIGHT RIGHT";
+        case Maneuver::TurnRight: return "RIGHT";
+        case Maneuver::SharpRight: return "SHARP RIGHT";
+        case Maneuver::Roundabout: return "ROUNDABOUT";
+        case Maneuver::Arrive: return "ARRIVED";
+        case Maneuver::Continue:
+        default: return "CONTINUE";
+    }
+}
+
 void maneuverLabelText(const NavState& state, char* buffer, int bufferSize) {
+    if (state.distanceToManeuverMeters <= 0) {
+        std::snprintf(buffer, bufferSize, "%s", immediateManeuverLabel(state.maneuver));
+        return;
+    }
+
     if (state.maneuver == Maneuver::Roundabout && state.roundaboutExit > 0) {
         std::snprintf(buffer, bufferSize, "ROUNDABOUT IN");
         return;
@@ -437,6 +471,7 @@ void maneuverLabelText(const NavState& state, char* buffer, int bufferSize) {
 float maneuverAngle(Maneuver maneuver) {
     switch (maneuver) {
         case Maneuver::BendLeft: return -35.0f;
+        case Maneuver::BendRight: return 35.0f;
         case Maneuver::ExitLeft: return -28.0f;
         case Maneuver::SlightLeft: return -28.0f;
         case Maneuver::TurnLeft: return -55.0f;
@@ -564,7 +599,9 @@ void App::renderNavigation(Display& display) {
         drawDirectionBitmap(display, cx, graphicY, _state.maneuver);
     }
     if (_state.maneuver != Maneuver::Arrive) {
-        drawDistance(display, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
+        if (_state.distanceToManeuverMeters > 0) {
+            drawDistance(display, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
+        }
         display.text(cx, InstructionY, label, 2, Palette::Muted, TextAlign::Center);
     }
 }

@@ -109,6 +109,7 @@ The current firmware does not require this object yet; for now the route lifecyc
 
 - `continue`
 - `bendLeft`
+- `bendRight`
 - `slightLeft`
 - `turnLeft`
 - `sharpLeft`
