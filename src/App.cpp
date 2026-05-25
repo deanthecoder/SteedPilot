@@ -14,6 +14,10 @@
 #include <cmath>
 #include <cstdio>
 
+#ifdef STEEDPILOT_PROFILE_RENDER
+#include <Arduino.h>
+#endif
+
 namespace SteedPilot {
 namespace {
 
@@ -24,6 +28,62 @@ constexpr int UnitY = 318;
 constexpr int GraphicOffsetY = 15;
 constexpr float ProgressStartDegrees = -130.0f;
 constexpr float ProgressSweepDegrees = 260.0f;
+
+#ifdef STEEDPILOT_PROFILE_RENDER
+struct RenderProfile {
+    const char* kind = nullptr;
+    uint32_t startedUs = 0;
+    uint32_t clearUs = 0;
+    uint32_t arcsUs = 0;
+    uint32_t statusUs = 0;
+    uint32_t graphicUs = 0;
+    uint32_t textUs = 0;
+    uint32_t presentUs = 0;
+};
+
+RenderProfile activeProfile;
+
+void beginRenderProfile(const char* kind) {
+    activeProfile = {};
+    activeProfile.kind = kind;
+    activeProfile.startedUs = micros();
+}
+
+void printRenderProfile() {
+    const uint32_t totalUs = micros() - activeProfile.startedUs;
+    Serial.printf(
+        "render-profile kind=%s total=%lu.%03lums clear=%lu.%03lums arcs=%lu.%03lums status=%lu.%03lums graphic=%lu.%03lums text=%lu.%03lums present=%lu.%03lums\n",
+        activeProfile.kind ? activeProfile.kind : "unknown",
+        (unsigned long)(totalUs / 1000),
+        (unsigned long)(totalUs % 1000),
+        (unsigned long)(activeProfile.clearUs / 1000),
+        (unsigned long)(activeProfile.clearUs % 1000),
+        (unsigned long)(activeProfile.arcsUs / 1000),
+        (unsigned long)(activeProfile.arcsUs % 1000),
+        (unsigned long)(activeProfile.statusUs / 1000),
+        (unsigned long)(activeProfile.statusUs % 1000),
+        (unsigned long)(activeProfile.graphicUs / 1000),
+        (unsigned long)(activeProfile.graphicUs % 1000),
+        (unsigned long)(activeProfile.textUs / 1000),
+        (unsigned long)(activeProfile.textUs % 1000),
+        (unsigned long)(activeProfile.presentUs / 1000),
+        (unsigned long)(activeProfile.presentUs % 1000)
+    );
+}
+
+class ProfileSection {
+public:
+    explicit ProfileSection(uint32_t& bucket) : _bucket(bucket), _startedUs(micros()) {}
+
+    ~ProfileSection() {
+        _bucket += micros() - _startedUs;
+    }
+
+private:
+    uint32_t& _bucket;
+    uint32_t _startedUs;
+};
+#endif
 
 int centerX(Display& display) {
     return display.width() / 2;
@@ -75,6 +135,14 @@ float easedProgress(float current, int target, uint32_t elapsedMs) {
     return current + (((float)target - current) * alpha);
 }
 
+int roundedProgress(float value) {
+    if (value < 0.0f) {
+        return -1;
+    }
+
+    return clampProgress((int)(value + 0.5f));
+}
+
 void drawTripProgressArc(Display& display, float tripProgress) {
     if (tripProgress < 0.0f) {
         return;
@@ -88,7 +156,7 @@ void drawTripProgressArc(Display& display, float tripProgress) {
     if (trip >= 0) {
         const float sweep = ProgressSweepDegrees * (float)trip / 100.0f;
         const int arcRadius = radius - 18;
-        display.arc(cx, cy, arcRadius, ProgressStartDegrees, ProgressSweepDegrees, Color{38, 32, 17}, 3);
+        display.arc(cx, cy, arcRadius, ProgressStartDegrees, ProgressSweepDegrees, Color{38, 32, 17}, 5);
         display.arc(cx, cy, arcRadius, ProgressStartDegrees, sweep, Palette::Amber, 3);
         drawArcMarker(display, cx, cy, arcRadius, ProgressStartDegrees, Palette::Amber, 4);
         drawArcMarker(display, cx, cy, arcRadius, ProgressStartDegrees + ProgressSweepDegrees, Palette::Amber, 4);
@@ -109,7 +177,7 @@ void drawManeuverProgressArc(Display& display, float maneuverProgress) {
         const int complete = 100 - maneuver;
         const float sweep = ProgressSweepDegrees * (float)complete / 100.0f;
         const int arcRadius = radius - 30;
-        display.arc(cx, cy, arcRadius, ProgressStartDegrees, ProgressSweepDegrees, Color{8, 30, 32}, 7);
+        display.arc(cx, cy, arcRadius, ProgressStartDegrees, ProgressSweepDegrees, Color{8, 30, 32}, 9);
         display.arc(cx, cy, arcRadius, ProgressStartDegrees, sweep, Palette::Cyan, 7);
         drawArcMarker(display, cx, cy, arcRadius, ProgressStartDegrees, Palette::Cyan, 5);
         drawArcMarker(display, cx, cy, arcRadius, ProgressStartDegrees + ProgressSweepDegrees, Palette::Cyan, 5);
@@ -238,6 +306,10 @@ void drawImageTransformed(Display& display, int cx, int cy, const SteedPilotGray
     }
 }
 
+void drawImageCentered(Display& display, int cx, int cy, const SteedPilotGrayAlphaImage& image) {
+    display.image(cx - image.width / 2, cy - image.height / 2, image);
+}
+
 void drawContinueLane(Display& display, int cx, int cy, Color color) {
     const int topY = cy - 70;
     const int bottomY = cy + 62;
@@ -341,10 +413,6 @@ void drawRoundabout(Display& display, int cx, int cy, const NavState& state) {
     display.fillCircle(targetOuterX, targetOuterY, 7, Palette::Cyan);
 }
 
-void drawRoundaboutEntryStub(Display& display, int cx, int cy) {
-    display.line(cx, cy + 54, cx, cy + 92, Color{230, 230, 230}, 9);
-}
-
 void drawRoundaboutBitmap(Display& display, int cx, int cy, const NavState& state) {
     const int exitCount = state.roundaboutExitCount > 0 ? state.roundaboutExitCount : 4;
     const int targetExit = state.roundaboutExit > 0 ? state.roundaboutExit : 1;
@@ -354,6 +422,8 @@ void drawRoundaboutBitmap(Display& display, int cx, int cy, const NavState& stat
     const float targetDegrees = hasAngles && targetExit <= state.roundaboutExitAngleCount
         ? (float)state.roundaboutExitAngles[targetExit - 1]
         : startDegrees + stepDegrees * (float)(targetExit - 1);
+
+    drawImageTransformed(display, cx, cy, SteedPilotRoundaboutNonExit, 180.0f);
 
     for (int i = 0; i < exitCount; ++i) {
         const int exitNumber = i + 1;
@@ -368,34 +438,33 @@ void drawRoundaboutBitmap(Display& display, int cx, int cy, const NavState& stat
     }
 
     drawImageTransformed(display, cx, cy, SteedPilotRoundaboutRoute, targetDegrees);
-    drawRoundaboutEntryStub(display, cx, cy);
 }
 
 void drawDirectionBitmap(Display& display, int cx, int cy, Maneuver maneuver) {
     switch (maneuver) {
         case Maneuver::Continue:
-            drawImageTransformed(display, cx, cy, SteedPilotDirectionContinue);
+            drawImageCentered(display, cx, cy, SteedPilotDirectionContinue);
             break;
         case Maneuver::BendLeft:
-            drawImageTransformed(display, cx, cy, SteedPilotDirectionBendLeft);
+            drawImageCentered(display, cx, cy, SteedPilotDirectionBendLeft);
             break;
         case Maneuver::BendRight:
             drawImageTransformed(display, cx, cy, SteedPilotDirectionBendLeft, 0.0f, true);
             break;
         case Maneuver::ExitLeft:
-            drawImageTransformed(display, cx, cy, SteedPilotDirectionExitLeft);
+            drawImageCentered(display, cx, cy, SteedPilotDirectionExitLeft);
             break;
         case Maneuver::SlightLeft:
-            drawImageTransformed(display, cx, cy, SteedPilotDirectionSlightLeft);
+            drawImageCentered(display, cx, cy, SteedPilotDirectionSlightLeft);
             break;
         case Maneuver::TurnLeft:
-            drawImageTransformed(display, cx, cy, SteedPilotDirectionTurnLeft);
+            drawImageCentered(display, cx, cy, SteedPilotDirectionTurnLeft);
             break;
         case Maneuver::SharpLeft:
-            drawImageTransformed(display, cx, cy, SteedPilotDirectionSharpLeft);
+            drawImageCentered(display, cx, cy, SteedPilotDirectionSharpLeft);
             break;
         case Maneuver::UTurn:
-            drawImageTransformed(display, cx, cy, SteedPilotDirectionUTurnLeft);
+            drawImageCentered(display, cx, cy, SteedPilotDirectionUTurnLeft);
             break;
         case Maneuver::ExitRight:
             drawImageTransformed(display, cx, cy, SteedPilotDirectionExitLeft, 0.0f, true);
@@ -522,6 +591,9 @@ void App::setState(const NavState& state) {
     if (_displayManeuverProgress < 0.0f && state.maneuverProgressRemaining >= 0) {
         _displayManeuverProgress = (float)state.maneuverProgressRemaining;
     }
+
+    _lastRenderedTripProgress = -2;
+    _lastRenderedManeuverProgress = -2;
 }
 
 const NavState& App::state() const {
@@ -539,7 +611,17 @@ bool App::isAnimating() const {
         || (_state.maneuverProgressRemaining >= 0 && _displayManeuverProgress >= 0.0f && std::fabs(_displayManeuverProgress - (float)_state.maneuverProgressRemaining) > 0.5f);
 }
 
+bool App::needsProgressAnimationFrame() const {
+    const int trip = roundedProgress(_displayTripProgress);
+    const int maneuver = roundedProgress(_displayManeuverProgress);
+    return trip != _lastRenderedTripProgress || maneuver != _lastRenderedManeuverProgress;
+}
+
 void App::render(Display& display) {
+#ifdef STEEDPILOT_PROFILE_RENDER
+    beginRenderProfile("full");
+#endif
+
     switch (_state.mode) {
         case DisplayMode::Destination:
             renderDestination(display);
@@ -559,28 +641,90 @@ void App::render(Display& display) {
             break;
     }
 
-    display.present();
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.presentUs);
+#endif
+        display.present();
+    }
+
+#ifdef STEEDPILOT_PROFILE_RENDER
+    printRenderProfile();
+#endif
+
+    _lastRenderedTripProgress = roundedProgress(_displayTripProgress);
+    _lastRenderedManeuverProgress = roundedProgress(_displayManeuverProgress);
 }
 
 void App::renderProgressAnimation(Display& display) {
-    if (_state.mode == DisplayMode::Navigation && _state.maneuver != Maneuver::Arrive) {
-        drawTripProgressArc(display, _displayTripProgress);
-        drawManeuverProgressArc(display, _displayManeuverProgress);
-        display.present();
-    } else if (_state.mode == DisplayMode::Destination) {
-        drawTripProgressArc(display, _displayTripProgress);
-        display.present();
+    if (!needsProgressAnimationFrame()) {
+        return;
     }
+
+#ifdef STEEDPILOT_PROFILE_RENDER
+    beginRenderProfile("animation");
+#endif
+
+    if (_state.mode == DisplayMode::Navigation && _state.maneuver != Maneuver::Arrive) {
+        {
+#ifdef STEEDPILOT_PROFILE_RENDER
+            ProfileSection section(activeProfile.arcsUs);
+#endif
+            drawTripProgressArc(display, _displayTripProgress);
+            drawManeuverProgressArc(display, _displayManeuverProgress);
+        }
+        {
+#ifdef STEEDPILOT_PROFILE_RENDER
+            ProfileSection section(activeProfile.presentUs);
+#endif
+            display.present();
+        }
+    } else if (_state.mode == DisplayMode::Destination) {
+        {
+#ifdef STEEDPILOT_PROFILE_RENDER
+            ProfileSection section(activeProfile.arcsUs);
+#endif
+            drawTripProgressArc(display, _displayTripProgress);
+        }
+        {
+#ifdef STEEDPILOT_PROFILE_RENDER
+            ProfileSection section(activeProfile.presentUs);
+#endif
+            display.present();
+        }
+    }
+
+#ifdef STEEDPILOT_PROFILE_RENDER
+    printRenderProfile();
+#endif
+
+    _lastRenderedTripProgress = roundedProgress(_displayTripProgress);
+    _lastRenderedManeuverProgress = roundedProgress(_displayManeuverProgress);
 }
 
 void App::renderNavigation(Display& display) {
-    drawCircularShell(display);
-    if (_state.maneuver != Maneuver::Arrive) {
-        drawTripProgressArc(display, _displayTripProgress);
-        drawManeuverProgressArc(display, _displayManeuverProgress);
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.clearUs);
+#endif
+        drawCircularShell(display);
     }
-    drawSpeedWarning(display, _state);
-    drawLinkStatus(display, _state);
+    if (_state.maneuver != Maneuver::Arrive) {
+        {
+#ifdef STEEDPILOT_PROFILE_RENDER
+            ProfileSection section(activeProfile.arcsUs);
+#endif
+            drawTripProgressArc(display, _displayTripProgress);
+            drawManeuverProgressArc(display, _displayManeuverProgress);
+        }
+    }
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.statusUs);
+#endif
+        drawSpeedWarning(display, _state);
+        drawLinkStatus(display, _state);
+    }
 
     const int cx = centerX(display);
     const int cy = centerY(display);
@@ -588,17 +732,27 @@ void App::renderNavigation(Display& display) {
     maneuverLabelText(_state, label, sizeof(label));
 
     const int graphicY = cy - 48 + GraphicOffsetY;
-    if (_state.maneuver == Maneuver::Roundabout) {
-        drawRoundaboutBitmap(display, cx, graphicY, _state);
-        char exitLabel[16];
-        std::snprintf(exitLabel, sizeof(exitLabel), "EXIT %d", _state.roundaboutExit);
-        display.text(cx, 38, exitLabel, 2, Palette::Muted, TextAlign::Center);
-    } else if (_state.maneuver == Maneuver::Arrive) {
-        drawFinishFlag(display, cx, cy);
-    } else {
-        drawDirectionBitmap(display, cx, graphicY, _state.maneuver);
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.graphicUs);
+#endif
+        if (_state.maneuver == Maneuver::Roundabout) {
+            drawRoundaboutBitmap(display, cx, graphicY, _state);
+        } else if (_state.maneuver == Maneuver::Arrive) {
+            drawFinishFlag(display, cx, cy);
+        } else {
+            drawDirectionBitmap(display, cx, graphicY, _state.maneuver);
+        }
     }
     if (_state.maneuver != Maneuver::Arrive) {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.textUs);
+#endif
+        if (_state.maneuver == Maneuver::Roundabout) {
+            char exitLabel[16];
+            std::snprintf(exitLabel, sizeof(exitLabel), "EXIT %d", _state.roundaboutExit);
+            display.text(cx, 38, exitLabel, 2, Palette::Muted, TextAlign::Center);
+        }
         if (_state.distanceToManeuverMeters > 0) {
             drawDistance(display, formatDistanceMeters(_state.distanceToManeuverMeters, _units), Palette::White);
         }
@@ -607,27 +761,72 @@ void App::renderNavigation(Display& display) {
 }
 
 void App::renderDestination(Display& display) {
-    drawCircularShell(display);
-    drawTripProgressArc(display, _displayTripProgress);
-    drawLinkStatus(display, _state);
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.clearUs);
+#endif
+        drawCircularShell(display);
+    }
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.arcsUs);
+#endif
+        drawTripProgressArc(display, _displayTripProgress);
+    }
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.statusUs);
+#endif
+        drawLinkStatus(display, _state);
+    }
 
     const int cx = centerX(display);
     const int cy = centerY(display);
-    drawImageTransformed(display, cx, cy - 34 + GraphicOffsetY, SteedPilotDirectionHeading, (float)_state.destinationBearingDegrees);
-    drawDistance(display, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::White);
-    display.text(cx, InstructionY, _state.offRoute ? "OFF ROUTE" : "DESTINATION", 2, _state.offRoute ? Palette::Amber : Palette::Muted, TextAlign::Center);
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.graphicUs);
+#endif
+        drawImageTransformed(display, cx, cy - 34 + GraphicOffsetY, SteedPilotDirectionHeading, (float)_state.destinationBearingDegrees);
+    }
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.textUs);
+#endif
+        drawDistance(display, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::White);
+        display.text(cx, InstructionY, _state.offRoute ? "OFF ROUTE" : "DESTINATION", 2, _state.offRoute ? Palette::Amber : Palette::Muted, TextAlign::Center);
+    }
 }
 
 void App::renderRideInfo(Display& display) {
-    drawCircularShell(display);
-    drawLinkStatus(display, _state);
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.clearUs);
+#endif
+        drawCircularShell(display);
+    }
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.statusUs);
+#endif
+        drawLinkStatus(display, _state);
+    }
 
-    display.text(centerX(display), centerY(display) - 36, "RIDE", 4, Palette::White, TextAlign::Center);
-    drawDistance(display, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::Amber);
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.textUs);
+#endif
+        display.text(centerX(display), centerY(display) - 36, "RIDE", 4, Palette::White, TextAlign::Center);
+        drawDistance(display, formatDistanceMeters(_state.distanceToDestinationMeters, _units), Palette::Amber);
+    }
 }
 
 void App::renderNoPhone(Display& display) {
-    drawCircularShell(display);
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.clearUs);
+#endif
+        drawCircularShell(display);
+    }
 
     const int cx = centerX(display);
     const int cy = centerY(display);
@@ -638,27 +837,47 @@ void App::renderNoPhone(Display& display) {
         title = "SET ROUTE";
     }
 
-    display.text(cx, cy - 20, title, 2, Palette::White, TextAlign::Center);
-    display.text(cx, cy + 18, "WAITING", 2, Palette::Muted, TextAlign::Center);
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.textUs);
+#endif
+        display.text(cx, cy - 20, title, 2, Palette::White, TextAlign::Center);
+        display.text(cx, cy + 18, "WAITING", 2, Palette::Muted, TextAlign::Center);
+    }
 }
 
 void App::renderCalibration(Display& display) {
-    display.clear(Palette::Black);
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.clearUs);
+#endif
+        display.clear(Palette::Black);
+    }
 
     const int cx = centerX(display);
     const int cy = centerY(display);
     const int maxRadius = faceRadius(display);
 
-    for (int r = 30; r <= maxRadius; r += 30) {
-        display.circle(cx, cy, r, r == maxRadius ? Palette::Red : Palette::Dim, r == maxRadius ? 2 : 1);
-    }
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.graphicUs);
+#endif
+        for (int r = 30; r <= maxRadius; r += 30) {
+            display.circle(cx, cy, r, r == maxRadius ? Palette::Red : Palette::Dim, r == maxRadius ? 2 : 1);
+        }
 
-    display.line(cx, 0, cx, display.height() - 1, Palette::Cyan, 1);
-    display.line(0, cy, display.width() - 1, cy, Palette::Cyan, 1);
-    display.line(0, 0, display.width() - 1, display.height() - 1, Palette::Muted, 1);
-    display.line(display.width() - 1, 0, 0, display.height() - 1, Palette::Muted, 1);
-    display.text(cx, cy - 10, "CAL", 2, Palette::White, TextAlign::Center);
-    display.text(cx, cy + 18, "360x360", 1, Palette::Muted, TextAlign::Center);
+        display.line(cx, 0, cx, display.height() - 1, Palette::Cyan, 1);
+        display.line(0, cy, display.width() - 1, cy, Palette::Cyan, 1);
+        display.line(0, 0, display.width() - 1, display.height() - 1, Palette::Muted, 1);
+        display.line(display.width() - 1, 0, 0, display.height() - 1, Palette::Muted, 1);
+    }
+    {
+#ifdef STEEDPILOT_PROFILE_RENDER
+        ProfileSection section(activeProfile.textUs);
+#endif
+        display.text(cx, cy - 10, "CAL", 2, Palette::White, TextAlign::Center);
+        display.text(cx, cy + 18, "360x360", 1, Palette::Muted, TextAlign::Center);
+    }
 }
 
 } // namespace SteedPilot

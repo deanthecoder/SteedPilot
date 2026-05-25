@@ -45,6 +45,7 @@ struct ContentView: View {
     @State private var showingMapKitDebug = false
     @State private var searchEditorPresented = false
     @State private var navigationDebugLog: [String] = []
+    @State private var activeManeuverProgressWindow: ManeuverProgressWindow?
     @State private var routeAuditMessage: String?
     @State private var saveRouteName = ""
     @State private var savedRoutes: [SavedRoute] = []
@@ -1624,6 +1625,7 @@ struct ContentView: View {
     }
 
     private func startRoute() {
+        activeManeuverProgressWindow = nil
         guard let payload = rideStartPayload() else {
             return
         }
@@ -1657,6 +1659,7 @@ struct ContentView: View {
         locationProvider.stopRideTracking()
         smoothedDestinationBearing = nil
         debugRideDistanceMeters = nil
+        activeManeuverProgressWindow = nil
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
@@ -1708,10 +1711,15 @@ struct ContentView: View {
 
     private func resetDebugRideProgress() {
         debugRideDistanceMeters = nil
+        activeManeuverProgressWindow = nil
         sendRideUpdate()
     }
 
     private func setDebugRideDistance(_ distance: CLLocationDistance) {
+        if let debugRideDistanceMeters,
+           distance < debugRideDistanceMeters {
+            activeManeuverProgressWindow = nil
+        }
         debugRideDistanceMeters = max(0, min(totalRouteDistance, distance))
         sendRideUpdate()
     }
@@ -1735,7 +1743,7 @@ struct ContentView: View {
     }
 
     private func directionsRideStartPayload() -> Data? {
-        let snapshot = rideNavigationSnapshot()
+        let snapshot = trackedRideNavigationSnapshot()
         appendNavigationDebugLog(snapshot: snapshot, mode: "navigation")
 
         if snapshot.isOffRoute {
@@ -1801,6 +1809,7 @@ struct ContentView: View {
             "send=\(snapshot.maneuver.debugTitle)",
             "toManeuver=\(formatDebugDistance(CLLocationDistance(snapshot.distanceToManeuverMeters)))",
             "toDest=\(formatDebugDistance(CLLocationDistance(snapshot.distanceToDestinationMeters)))",
+            "maneuverProgress=\(snapshot.maneuverProgressRemaining)%",
             "routeProgress=\(formatDebugDistance(snapshot.routeProgressMeters))",
             "routeGap=\(formatDebugDistance(snapshot.distanceToRouteMeters))",
             "selectedOffset=\(selectedOffset)",
@@ -1887,11 +1896,14 @@ struct ContentView: View {
         let totalDistance = totalRouteDistance
         var rows: [RouteAuditRow] = []
         var previousRow: RouteAuditRow?
+        var progressWindow: ManeuverProgressWindow?
         var distance: CLLocationDistance = 0
 
         while distance <= totalDistance {
             if let progress = simulatedRouteProgress(at: distance) {
-                let snapshot = rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: progress, currentCoordinate: nil)
+                let result = rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: progress, currentCoordinate: nil, progressWindow: progressWindow)
+                progressWindow = result.progressWindow
+                let snapshot = result.snapshot
                 let row = makeRouteAuditRow(snapshot: snapshot, progress: progress, previousRow: previousRow, stepMeters: stepMeters)
                 rows.append(row)
                 previousRow = row
@@ -1903,7 +1915,8 @@ struct ContentView: View {
         if totalDistance > 0,
            rows.last?.routeProgressMeters.rounded() != totalDistance.rounded(),
            let progress = simulatedRouteProgress(at: totalDistance) {
-            let snapshot = rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: progress, currentCoordinate: nil)
+            let result = rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: progress, currentCoordinate: nil, progressWindow: progressWindow)
+            let snapshot = result.snapshot
             let row = makeRouteAuditRow(snapshot: snapshot, progress: progress, previousRow: previousRow, stepMeters: stepMeters)
             rows.append(row)
         }
@@ -2006,12 +2019,22 @@ struct ContentView: View {
                snapshot.distanceToManeuverMeters > previousRow.distanceToManeuverMeters + Int((stepMeters + 30).rounded()) {
                 warnings.append("same maneuver jumped to a later target")
             }
+
+            if !sameTarget,
+               snapshot.maneuver != .arrive,
+               snapshot.maneuverProgressRemaining < 95 {
+                warnings.append("new target progress started partially complete")
+            }
+        } else if snapshot.maneuver != .arrive,
+                  snapshot.maneuverProgressRemaining < 95 {
+            warnings.append("first target progress started partially complete")
         }
 
         return RouteAuditRow(
             routeProgressMeters: progress.distanceFromRouteStart,
             maneuver: snapshot.maneuver.debugTitle,
             distanceToManeuverMeters: snapshot.distanceToManeuverMeters,
+            maneuverProgressRemaining: snapshot.maneuverProgressRemaining,
             distanceToDestinationMeters: snapshot.distanceToDestinationMeters,
             selectedOffsetMeters: snapshot.selectedInstructionOffsetMeters,
             selectedTargetMeters: selectedTarget,
@@ -2030,14 +2053,24 @@ struct ContentView: View {
         "\(Int(meters.rounded()))m"
     }
 
+    private func trackedRideNavigationSnapshot() -> RideNavigationSnapshot {
+        let result = rideNavigationSnapshot(progressWindow: activeManeuverProgressWindow)
+        activeManeuverProgressWindow = result.progressWindow
+        return result.snapshot
+    }
+
     private func rideNavigationSnapshot() -> RideNavigationSnapshot {
+        rideNavigationSnapshot(progressWindow: nil).snapshot
+    }
+
+    private func rideNavigationSnapshot(progressWindow: ManeuverProgressWindow?) -> (snapshot: RideNavigationSnapshot, progressWindow: ManeuverProgressWindow?) {
         let totalDistance = totalRouteDistance
         let fallbackDistance = Int(totalDistance.rounded())
         let fallbackManeuver = Int((routeLegs.first?.distance ?? CLLocationDistance(fallbackDistance)).rounded())
         let fallbackBearing = fallbackDestinationBearing()
 
         guard totalDistance > 0 else {
-            return RideNavigationSnapshot(
+            return (RideNavigationSnapshot(
                 distanceToDestinationMeters: max(fallbackDistance, 0),
                 distanceToManeuverMeters: max(fallbackManeuver, 0),
                 destinationBearingDegrees: fallbackBearing,
@@ -2056,17 +2089,17 @@ struct ContentView: View {
                 distanceToRouteMeters: 0,
                 isOffRoute: false,
                 selectionReason: "No route distance"
-            )
+            ), nil)
         }
 
         let fallbackInstruction = nextInstructionFallback()
         if let debugRideDistanceMeters,
            let routeProgress = simulatedRouteProgress(at: debugRideDistanceMeters) {
-            return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress, currentCoordinate: nil)
+            return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress, currentCoordinate: nil, progressWindow: progressWindow)
         }
 
         guard let currentCoordinate = locationProvider.currentCoordinate else {
-            return RideNavigationSnapshot(
+            return (RideNavigationSnapshot(
                 distanceToDestinationMeters: max(fallbackDistance, 0),
                 distanceToManeuverMeters: max(fallbackManeuver, 0),
                 destinationBearingDegrees: fallbackBearing,
@@ -2085,23 +2118,27 @@ struct ContentView: View {
                 distanceToRouteMeters: 0,
                 isOffRoute: false,
                 selectionReason: "No nearby GPS/debug position"
-            )
+            ), nil)
         }
 
         let routeProgress = nearestRouteProgress(to: currentCoordinate)
         if routeProgress == nil || routeProgress!.distanceToRoute > offRouteThresholdMeters {
-            return offRouteSnapshot(
+            return (offRouteSnapshot(
                 totalDistance: totalDistance,
                 currentCoordinate: currentCoordinate,
                 routeProgress: routeProgress,
                 reason: routeProgress.map { "Off route: \(formatDebugDistance($0.distanceToRoute)) from route" } ?? "Off route: no route projection"
-            )
+            ), nil)
         }
 
-        return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress!, currentCoordinate: currentCoordinate)
+        return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress!, currentCoordinate: currentCoordinate, progressWindow: progressWindow)
     }
 
     private func rideNavigationSnapshot(totalDistance: CLLocationDistance, routeProgress: RouteProgress, currentCoordinate: CLLocationCoordinate2D?) -> RideNavigationSnapshot {
+        rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress, currentCoordinate: currentCoordinate, progressWindow: nil).snapshot
+    }
+
+    private func rideNavigationSnapshot(totalDistance: CLLocationDistance, routeProgress: RouteProgress, currentCoordinate: CLLocationCoordinate2D?, progressWindow: ManeuverProgressWindow?) -> (snapshot: RideNavigationSnapshot, progressWindow: ManeuverProgressWindow?) {
         let remainingDistance = max(totalDistance - routeProgress.distanceFromRouteStart, 0)
         let instructionSelection = nextInstructionSelection(after: routeProgress)
         let instruction = instructionSelection?.instruction
@@ -2109,9 +2146,7 @@ struct ContentView: View {
         let remainingManeuver = selectedInstructionTargetOffset.map {
             max($0 - routeProgress.distanceFromRouteStart, 0)
         } ?? max(routeProgress.legDistance - routeProgress.distanceFromLegStart, 0)
-        let instructionDistance = instruction?.distance ?? max(routeProgress.legDistance - routeProgress.distanceFromLegStart, 1)
         let tripProgress = totalDistance > 0 ? Int(((routeProgress.distanceFromRouteStart / totalDistance) * 100).rounded()) : 0
-        let maneuverProgress = instructionDistance > 0 ? Int(((remainingManeuver / instructionDistance) * 100).rounded()) : 0
         let destinationBearing = currentCoordinate.map {
             relativeDestinationBearing(from: $0, routeProgress: routeProgress)
         } ?? relativeDestinationBearing(routeProgress: routeProgress)
@@ -2122,14 +2157,27 @@ struct ContentView: View {
             ? max(remainingManeuver - continueThresholdMeters, 1)
             : (isArriving ? remainingDistance : remainingManeuver)
         let maneuver = isArriving ? DeviceManeuver.arrive : (shouldContinue ? .continueAhead : (instruction?.maneuver ?? .continueAhead))
+        let progressDistance = isArriving ? remainingDistance : (shouldContinue ? displayedManeuverDistance : remainingManeuver)
+        let progressSignature = maneuverProgressSignature(
+            maneuver: maneuver,
+            instruction: instruction,
+            selectedTargetOffset: selectedInstructionTargetOffset,
+            shouldContinue: shouldContinue,
+            isArriving: isArriving
+        )
+        let progressResult = maneuverProgressRemaining(
+            signature: progressSignature,
+            remainingDistance: progressDistance,
+            progressWindow: progressWindow
+        )
         let selectionReason = isArriving ? "Arriving" : (shouldContinue ? "Synthetic continue: selected instruction activates in \(Int(displayedManeuverDistance.rounded()))m" : "Selected instruction")
 
-        return RideNavigationSnapshot(
+        return (RideNavigationSnapshot(
             distanceToDestinationMeters: Int(remainingDistance.rounded()),
             distanceToManeuverMeters: Int(displayedManeuverDistance.rounded()),
             destinationBearingDegrees: destinationBearing,
             tripProgressComplete: max(0, min(100, tripProgress)),
-            maneuverProgressRemaining: max(0, min(100, maneuverProgress)),
+            maneuverProgressRemaining: progressResult.progressRemaining,
             maneuver: maneuver,
             roundaboutExit: shouldContinue || isArriving ? nil : instruction?.roundaboutExit,
             roundaboutExitAngles: shouldContinue || isArriving ? [] : (instruction?.roundaboutExitAngles ?? []),
@@ -2143,7 +2191,32 @@ struct ContentView: View {
             distanceToRouteMeters: routeProgress.distanceToRoute,
             isOffRoute: false,
             selectionReason: selectionReason
-        )
+        ), progressResult.progressWindow)
+    }
+
+    private func maneuverProgressSignature(maneuver: DeviceManeuver, instruction: RouteInstruction?, selectedTargetOffset: CLLocationDistance?, shouldContinue: Bool, isArriving: Bool) -> String? {
+        guard !isArriving else {
+            return nil
+        }
+
+        let target = selectedTargetOffset.map { Int(($0 / 5).rounded() * 5) } ?? -1
+        let exit = instruction?.roundaboutExit ?? 0
+        let phase = shouldContinue ? "continue" : "maneuver"
+        return "\(phase)|\(maneuver.rawValue)|\(target)|\(exit)|\(instruction?.rawInstruction ?? "none")"
+    }
+
+    private func maneuverProgressRemaining(signature: String?, remainingDistance: CLLocationDistance, progressWindow: ManeuverProgressWindow?) -> (progressRemaining: Int, progressWindow: ManeuverProgressWindow?) {
+        guard let signature else {
+            return (100, nil)
+        }
+
+        let remaining = max(remainingDistance, 0)
+        let window = progressWindow?.signature == signature
+            ? progressWindow!
+            : ManeuverProgressWindow(signature: signature, startDistanceMeters: max(remaining, 1))
+        let range = max(window.startDistanceMeters, 1)
+        let progress = Int(((remaining / range) * 100).rounded())
+        return (max(0, min(100, progress)), window)
     }
 
     private var offRouteThresholdMeters: CLLocationDistance {
@@ -3683,6 +3756,11 @@ private struct RouteLeg: Identifiable {
     }
 }
 
+private struct ManeuverProgressWindow {
+    let signature: String
+    let startDistanceMeters: CLLocationDistance
+}
+
 private struct RideNavigationSnapshot {
     let distanceToDestinationMeters: Int
     let distanceToManeuverMeters: Int
@@ -3749,10 +3827,10 @@ private struct RouteAudit {
 
         lines.append("## Samples")
         lines.append("")
-        lines.append("| Progress | Send | To maneuver | To dest | Selected offset | Target | End | Exit | Angles | Bearings | Decision | Instruction |")
-        lines.append("| ---: | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- |")
+        lines.append("| Progress | Send | To maneuver | Maneuver progress | To dest | Selected offset | Target | End | Exit | Angles | Bearings | Decision | Instruction |")
+        lines.append("| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- |")
         for row in rows {
-            lines.append("| \(formatMeters(row.routeProgressMeters)) | \(escape(row.maneuver)) | \(formatMeters(CLLocationDistance(row.distanceToManeuverMeters))) | \(formatMeters(CLLocationDistance(row.distanceToDestinationMeters))) | \(row.selectedOffsetMeters.map(formatMeters) ?? "none") | \(row.selectedTargetMeters.map(formatMeters) ?? "none") | \(row.selectedEndMeters.map(formatMeters) ?? "none") | \(row.roundaboutExit.map(String.init) ?? "none") | \(escape(formatAngles(row.roundaboutAngles))) | \(escape(formatBearings(incoming: row.incomingBearing, outgoing: row.outgoingBearing))) | \(escape(row.decision)) | \(escape(row.selectedInstruction)) |")
+            lines.append("| \(formatMeters(row.routeProgressMeters)) | \(escape(row.maneuver)) | \(formatMeters(CLLocationDistance(row.distanceToManeuverMeters))) | \(row.maneuverProgressRemaining)% | \(formatMeters(CLLocationDistance(row.distanceToDestinationMeters))) | \(row.selectedOffsetMeters.map(formatMeters) ?? "none") | \(row.selectedTargetMeters.map(formatMeters) ?? "none") | \(row.selectedEndMeters.map(formatMeters) ?? "none") | \(row.roundaboutExit.map(String.init) ?? "none") | \(escape(formatAngles(row.roundaboutAngles))) | \(escape(formatBearings(incoming: row.incomingBearing, outgoing: row.outgoingBearing))) | \(escape(row.decision)) | \(escape(row.selectedInstruction)) |")
         }
 
         lines.append("")
@@ -3799,6 +3877,7 @@ private struct RouteAuditRow {
     let routeProgressMeters: CLLocationDistance
     let maneuver: String
     let distanceToManeuverMeters: Int
+    let maneuverProgressRemaining: Int
     let distanceToDestinationMeters: Int
     let selectedOffsetMeters: CLLocationDistance?
     let selectedTargetMeters: CLLocationDistance?
@@ -3822,6 +3901,7 @@ private struct RouteAuditRow {
             routeProgressMeters: routeProgressMeters,
             maneuver: maneuver,
             distanceToManeuverMeters: distanceToManeuverMeters,
+            maneuverProgressRemaining: maneuverProgressRemaining,
             distanceToDestinationMeters: distanceToDestinationMeters,
             selectedOffsetMeters: selectedOffsetMeters,
             selectedTargetMeters: selectedTargetMeters,

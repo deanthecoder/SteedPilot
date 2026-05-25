@@ -22,7 +22,7 @@ constexpr uint32_t SplashHoldMs = 2000;
 constexpr uint32_t SplashFadeOutMs = 900;
 constexpr uint32_t SplashTotalMs = SplashFadeInMs + SplashHoldMs + SplashFadeOutMs;
 constexpr uint32_t NoPhoneTimeoutMs = 10000;
-constexpr uint32_t AnimationFrameMs = 16;
+constexpr uint32_t AnimationFrameMs = 50;
 
 FirmwareDisplay display;
 FirmwareBle ble;
@@ -235,7 +235,11 @@ void loop() {
         }
     }
 
-    if (!pendingBleState && !noPhoneVisible && app.isAnimating() && now - lastAnimationFrameMs >= AnimationFrameMs) {
+    if (!pendingBleState
+        && !noPhoneVisible
+        && app.isAnimating()
+        && app.needsProgressAnimationFrame()
+        && now - lastAnimationFrameMs >= AnimationFrameMs) {
         app.renderProgressAnimation(display);
         lastAnimationFrameMs = now;
     }

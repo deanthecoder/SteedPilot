@@ -252,3 +252,8 @@ Early planning and prototyping.
 - Detect genuine road bends from route geometry, rather than treating "keep left" style lane or branch instructions as bends.
 - Source speed limit data so the device can show the red speed warning ring reliably.
 - Keep improving off-route handling and route recalculation after missed turns or road closures.
+- Add a touch menu on the device for basic local actions without overloading the riding UI.
+- Make screen refresh more efficient to reduce power consumption while improving update responsiveness.
+- Add auto-standby and wake-up behaviour based on movement.
+- Add a battery meter for the device.
+- Add a general battery-saving pass covering backlight brightness, BLE cadence, redraw cadence, CPU sleep, and peripheral power states.

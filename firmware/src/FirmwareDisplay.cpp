@@ -245,30 +245,16 @@ void FirmwareDisplay::line(int x0, int y0, int x1, int y1, SteedPilot::Color col
 }
 
 void FirmwareDisplay::circle(int cx, int cy, int radius, SteedPilot::Color color, int thickness) {
-    const float half = max(0.5f, (float)(thickness - 1) * 0.5f);
-    const int boundsRadius = radius + (int)ceilf(half + 1.0f);
-    const float sampleOffsets[] = {-0.25f, 0.25f};
-    constexpr int sampleCount = 2;
-    constexpr int totalSamples = sampleCount * sampleCount;
+    const int brushRadius = max(1, (thickness + 1) / 2);
+    const float stepDegrees = max(0.5f, 120.0f / (float)max(radius, 1));
+    const int steps = max(1, (int)ceilf(360.0f / stepDegrees));
 
-    for (int y = cy - boundsRadius; y <= cy + boundsRadius; ++y) {
-        for (int x = cx - boundsRadius; x <= cx + boundsRadius; ++x) {
-            int coveredSamples = 0;
-            for (int sampleY = 0; sampleY < sampleCount; ++sampleY) {
-                for (int sampleX = 0; sampleX < sampleCount; ++sampleX) {
-                    const float dx = (float)x + sampleOffsets[sampleX] - (float)cx;
-                    const float dy = (float)y + sampleOffsets[sampleY] - (float)cy;
-                    const float edgeDistance = fabsf(sqrtf(dx * dx + dy * dy) - (float)radius);
-                    if (edgeDistance <= half) {
-                        ++coveredSamples;
-                    }
-                }
-            }
-
-            if (coveredSamples) {
-                maxPixel(x, y, color.r, color.g, color.b, coverageAlpha(coveredSamples, totalSamples));
-            }
-        }
+    for (int step = 0; step < steps; ++step) {
+        const float degrees = 360.0f * (float)step / (float)steps;
+        const float radians = (degrees - 90.0f) * PI / 180.0f;
+        const int x = cx + (int)roundf(cosf(radians) * (float)radius);
+        const int y = cy + (int)roundf(sinf(radians) * (float)radius);
+        fillCircle(x, y, brushRadius, color);
     }
 }
 
@@ -282,53 +268,16 @@ void FirmwareDisplay::arc(int cx, int cy, int radius, float startDegrees, float 
         return;
     }
 
-    const float half = max(0.5f, (float)(thickness - 1) * 0.5f);
-    const int boundsRadius = radius + (int)ceilf(half + 1.0f);
-    const float innerRadius = max(0.0f, (float)radius - half);
-    const float outerRadius = (float)radius + half;
-    const float prefilterInner = max(0.0f, innerRadius - 1.0f);
-    const float prefilterOuter = outerRadius + 1.0f;
-    const float inner2 = innerRadius * innerRadius;
-    const float outer2 = outerRadius * outerRadius;
-    const float prefilterInner2 = prefilterInner * prefilterInner;
-    const float prefilterOuter2 = prefilterOuter * prefilterOuter;
-    const float normalizedStart = normalizeDegrees(startDegrees);
-    const float sampleOffsets[] = {-0.25f, 0.25f};
-    constexpr int sampleCount = 2;
-    constexpr int totalSamples = sampleCount * sampleCount;
+    const int brushRadius = max(1, (thickness + 1) / 2);
+    const float stepDegrees = max(0.5f, 120.0f / (float)max(radius, 1));
+    const int steps = max(0, (int)floorf(sweepDegrees / stepDegrees));
 
-    for (int y = cy - boundsRadius; y <= cy + boundsRadius; ++y) {
-        for (int x = cx - boundsRadius; x <= cx + boundsRadius; ++x) {
-            const float centerDx = (float)x - (float)cx;
-            const float centerDy = (float)y - (float)cy;
-            const float centerDistance2 = centerDx * centerDx + centerDy * centerDy;
-
-            if (centerDistance2 < prefilterInner2 || centerDistance2 > prefilterOuter2) {
-                continue;
-            }
-
-            const float centerDegrees = normalizeDegrees(atan2f(centerDy, centerDx) * 180.0f / PI + 90.0f);
-            if (!angleInSweep(centerDegrees, normalizedStart, sweepDegrees)) {
-                continue;
-            }
-
-            int coveredSamples = 0;
-            for (int sampleY = 0; sampleY < sampleCount; ++sampleY) {
-                for (int sampleX = 0; sampleX < sampleCount; ++sampleX) {
-                    const float dx = (float)x + sampleOffsets[sampleX] - (float)cx;
-                    const float dy = (float)y + sampleOffsets[sampleY] - (float)cy;
-                    const float distance2 = dx * dx + dy * dy;
-
-                    if (distance2 >= inner2 && distance2 <= outer2) {
-                        ++coveredSamples;
-                    }
-                }
-            }
-
-            if (coveredSamples) {
-                maxPixel(x, y, color.r, color.g, color.b, coverageAlpha(coveredSamples, totalSamples));
-            }
-        }
+    for (int step = 0; step <= steps; ++step) {
+        const float degrees = startDegrees + stepDegrees * (float)step;
+        const float radians = (degrees - 90.0f) * PI / 180.0f;
+        const int x = cx + (int)roundf(cosf(radians) * (float)radius);
+        const int y = cy + (int)roundf(sinf(radians) * (float)radius);
+        fillCircle(x, y, brushRadius, color);
     }
 }
 

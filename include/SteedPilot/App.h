@@ -54,6 +54,14 @@ public:
     bool isAnimating() const;
 
     /**
+     * Reports whether the rounded visible progress values changed since the
+     * previous animation render.
+     *
+     * @return True when rendering an animation frame would visibly change arcs.
+     */
+    bool needsProgressAnimationFrame() const;
+
+    /**
      * Renders the active display mode to the supplied display.
      *
      * @param display Rendering target used by either the simulator or firmware.
@@ -73,6 +81,8 @@ private:
     uint32_t _timeMs = 0;
     float _displayTripProgress = -1.0f;
     float _displayManeuverProgress = -1.0f;
+    int _lastRenderedTripProgress = -2;
+    int _lastRenderedManeuverProgress = -2;
 
     /**
      * Renders the turn-by-turn navigation screen.
