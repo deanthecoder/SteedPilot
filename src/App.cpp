@@ -777,6 +777,7 @@ void App::renderDestination(Display& display) {
 #ifdef STEEDPILOT_PROFILE_RENDER
         ProfileSection section(activeProfile.statusUs);
 #endif
+        drawSpeedWarning(display, _state);
         drawLinkStatus(display, _state);
     }
 
