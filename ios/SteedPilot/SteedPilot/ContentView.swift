@@ -1987,6 +1987,20 @@ struct ContentView: View {
             warnings.append("no selected instruction before destination")
         }
 
+        if snapshot.maneuver == .arrive,
+           progress.distanceFromRouteStart < totalRouteDistance - 130 {
+            warnings.append("arrived before destination threshold")
+        }
+
+        if let instruction = snapshot.selectedInstruction,
+           let selectedOffset = snapshot.selectedInstructionOffsetMeters,
+           let selectedTarget,
+           !instruction.rawInstruction.hasPrefix("Synthetic "),
+           instruction.maneuver != .arrive,
+           abs(selectedTarget - selectedOffset) < 2 {
+            warnings.append("MapKit instruction target is at step start")
+        }
+
         if let previousRow {
             let sameTarget = previousRow.selectedTargetMeters != nil
                 && selectedTarget != nil
@@ -2139,84 +2153,41 @@ struct ContentView: View {
     }
 
     private func rideNavigationSnapshot(totalDistance: CLLocationDistance, routeProgress: RouteProgress, currentCoordinate: CLLocationCoordinate2D?, progressWindow: ManeuverProgressWindow?) -> (snapshot: RideNavigationSnapshot, progressWindow: ManeuverProgressWindow?) {
-        let remainingDistance = max(totalDistance - routeProgress.distanceFromRouteStart, 0)
-        let instructionSelection = nextInstructionSelection(after: routeProgress)
-        let instruction = instructionSelection?.instruction
-        let selectedInstructionTargetOffset = instructionSelection.map(\.routeOffset)
-        let remainingManeuver = selectedInstructionTargetOffset.map {
-            max($0 - routeProgress.distanceFromRouteStart, 0)
-        } ?? max(routeProgress.legDistance - routeProgress.distanceFromLegStart, 0)
-        let tripProgress = totalDistance > 0 ? Int(((routeProgress.distanceFromRouteStart / totalDistance) * 100).rounded()) : 0
         let destinationBearing = currentCoordinate.map {
             relativeDestinationBearing(from: $0, routeProgress: routeProgress)
         } ?? relativeDestinationBearing(routeProgress: routeProgress)
-        let isArriving = remainingDistance <= 120 || instruction?.maneuver == .arrive
-        let continueThresholdMeters: CLLocationDistance = instruction?.maneuver.isBend == true ? 400 : 1609.344
-        let shouldContinue = !isArriving && remainingManeuver > continueThresholdMeters
-        let displayedManeuverDistance = shouldContinue
-            ? max(remainingManeuver - continueThresholdMeters, 1)
-            : (isArriving ? remainingDistance : remainingManeuver)
-        let maneuver = isArriving ? DeviceManeuver.arrive : (shouldContinue ? .continueAhead : (instruction?.maneuver ?? .continueAhead))
-        let progressDistance = isArriving ? remainingDistance : (shouldContinue ? displayedManeuverDistance : remainingManeuver)
-        let progressSignature = maneuverProgressSignature(
-            maneuver: maneuver,
-            instruction: instruction,
-            selectedTargetOffset: selectedInstructionTargetOffset,
-            shouldContinue: shouldContinue,
-            isArriving: isArriving
-        )
-        let progressResult = maneuverProgressRemaining(
-            signature: progressSignature,
-            remainingDistance: progressDistance,
+        let decisionResult = NavigationDecisionEngine.snapshot(
+            totalDistance: totalDistance,
+            routeProgress: navigationDecisionProgress(from: routeProgress),
+            legs: navigationDecisionLegs,
             progressWindow: progressWindow
         )
-        let selectionReason = isArriving ? "Arriving" : (shouldContinue ? "Synthetic continue: selected instruction activates in \(Int(displayedManeuverDistance.rounded()))m" : "Selected instruction")
+        let decisionSnapshot = decisionResult.snapshot
+        let instruction = routeInstruction(for: decisionSnapshot.selectedInstruction)
+        let selectedInstructionTargetOffset = decisionSnapshot.selectedInstructionTargetOffsetMeters
+        let maneuver = DeviceManeuver(decisionSnapshot.maneuver)
+        let isRoundabout = maneuver == .roundabout
 
         return (RideNavigationSnapshot(
-            distanceToDestinationMeters: Int(remainingDistance.rounded()),
-            distanceToManeuverMeters: Int(displayedManeuverDistance.rounded()),
+            distanceToDestinationMeters: decisionSnapshot.distanceToDestinationMeters,
+            distanceToManeuverMeters: decisionSnapshot.distanceToManeuverMeters,
             destinationBearingDegrees: destinationBearing,
-            tripProgressComplete: max(0, min(100, tripProgress)),
-            maneuverProgressRemaining: progressResult.progressRemaining,
+            tripProgressComplete: decisionSnapshot.tripProgressComplete,
+            maneuverProgressRemaining: decisionSnapshot.maneuverProgressRemaining,
             maneuver: maneuver,
-            roundaboutExit: shouldContinue || isArriving ? nil : instruction?.roundaboutExit,
-            roundaboutExitAngles: shouldContinue || isArriving ? [] : (instruction?.roundaboutExitAngles ?? []),
+            roundaboutExit: isRoundabout ? instruction?.roundaboutExit : nil,
+            roundaboutExitAngles: isRoundabout ? (instruction?.roundaboutExitAngles ?? []) : [],
             selectedInstruction: instruction,
             selectedInstructionCoordinate: selectedInstructionTargetOffset.flatMap(routeCoordinate),
             selectedInstructionText: instruction?.rawInstruction ?? "No remaining instruction",
-            selectedInstructionOffsetMeters: instructionSelection?.routeOffset,
-            selectedInstructionEndMeters: instructionSelection.map { $0.routeOffset + $0.instruction.distance },
+            selectedInstructionOffsetMeters: decisionSnapshot.selectedInstructionOffsetMeters,
+            selectedInstructionEndMeters: decisionSnapshot.selectedInstructionEndMeters,
             selectedInstructionTargetOffsetMeters: selectedInstructionTargetOffset,
-            routeProgressMeters: routeProgress.distanceFromRouteStart,
+            routeProgressMeters: decisionSnapshot.routeProgressMeters,
             distanceToRouteMeters: routeProgress.distanceToRoute,
             isOffRoute: false,
-            selectionReason: selectionReason
-        ), progressResult.progressWindow)
-    }
-
-    private func maneuverProgressSignature(maneuver: DeviceManeuver, instruction: RouteInstruction?, selectedTargetOffset: CLLocationDistance?, shouldContinue: Bool, isArriving: Bool) -> String? {
-        guard !isArriving else {
-            return nil
-        }
-
-        let target = selectedTargetOffset.map { Int(($0 / 5).rounded() * 5) } ?? -1
-        let exit = instruction?.roundaboutExit ?? 0
-        let phase = shouldContinue ? "continue" : "maneuver"
-        return "\(phase)|\(maneuver.rawValue)|\(target)|\(exit)|\(instruction?.rawInstruction ?? "none")"
-    }
-
-    private func maneuverProgressRemaining(signature: String?, remainingDistance: CLLocationDistance, progressWindow: ManeuverProgressWindow?) -> (progressRemaining: Int, progressWindow: ManeuverProgressWindow?) {
-        guard let signature else {
-            return (100, nil)
-        }
-
-        let remaining = max(remainingDistance, 0)
-        let window = progressWindow?.signature == signature
-            ? progressWindow!
-            : ManeuverProgressWindow(signature: signature, startDistanceMeters: max(remaining, 1))
-        let range = max(window.startDistanceMeters, 1)
-        let progress = Int(((remaining / range) * 100).rounded())
-        return (max(0, min(100, progress)), window)
+            selectionReason: decisionSnapshot.selectionReason
+        ), decisionResult.progressWindow)
     }
 
     private var offRouteThresholdMeters: CLLocationDistance {
@@ -2308,82 +2279,65 @@ struct ContentView: View {
         return nearestProgress
     }
 
+    private var navigationDecisionLegs: [NavigationDecisionLeg] {
+        routeLegs.map { leg in
+            NavigationDecisionLeg(
+                id: leg.id,
+                distance: leg.distance,
+                instructions: leg.instructions.enumerated().map { index, instruction in
+                    NavigationDecisionInstruction(
+                        legID: leg.id,
+                        index: index,
+                        distanceFromLegStart: instruction.distanceFromLegStart,
+                        distance: instruction.distance,
+                        rawInstruction: instruction.rawInstruction,
+                        maneuver: NavigationDecisionManeuver(instruction.maneuver),
+                        roundaboutExit: instruction.roundaboutExit
+                    )
+                }
+            )
+        }
+    }
+
+    private func navigationDecisionProgress(from progress: RouteProgress) -> NavigationDecisionRouteProgress {
+        NavigationDecisionRouteProgress(
+            legID: progress.legID,
+            distanceFromLegStart: progress.distanceFromLegStart,
+            distanceFromRouteStart: progress.distanceFromRouteStart,
+            legDistance: progress.legDistance
+        )
+    }
+
+    private func routeInstruction(for decisionInstruction: NavigationDecisionInstruction?) -> RouteInstruction? {
+        guard let decisionInstruction,
+              let leg = routeLegs.first(where: { $0.id == decisionInstruction.legID }),
+              leg.instructions.indices.contains(decisionInstruction.index) else {
+            return nil
+        }
+
+        return leg.instructions[decisionInstruction.index]
+    }
+
     private func nextInstruction(after routeProgress: RouteProgress) -> RouteInstruction? {
         nextInstructionSelection(after: routeProgress)?.instruction
     }
 
-    private func nextInstructionSelection(after routeProgress: RouteProgress) -> (instruction: RouteInstruction, routeOffset: CLLocationDistance, coordinate: CLLocationCoordinate2D?)? {
-        var totalBeforeLeg: CLLocationDistance = 0
-        var isFirstLeg = true
-        guard let leg = routeLegs.first(where: { candidate in
-            if candidate.id == routeProgress.legID {
-                return true
-            }
-            totalBeforeLeg += candidate.distance
-            isFirstLeg = false
-            return false
-        }) else {
+    private func nextInstructionSelection(after routeProgress: RouteProgress) -> (instruction: RouteInstruction, routeOffset: CLLocationDistance, targetOffset: CLLocationDistance, coordinate: CLLocationCoordinate2D?)? {
+        guard let selection = NavigationDecisionEngine.nextInstructionSelection(
+            after: navigationDecisionProgress(from: routeProgress),
+            legs: navigationDecisionLegs
+        ),
+              let instruction = routeInstruction(for: selection.instruction),
+              let leg = routeLegs.first(where: { $0.id == selection.instruction.legID }) else {
             return nil
         }
 
-        let lookbehindMeters: CLLocationDistance = 15
-        let routeStartInstructionSkipMeters: CLLocationDistance = 25
-        let waypointSeamInstructionDelayMeters: CLLocationDistance = 35
-        let shouldSkipRouteStartInstruction = isFirstLeg
-            && routeProgress.distanceFromRouteStart < routeStartInstructionSkipMeters
-        if let activeInstruction = leg.instructions.last(where: {
-            $0.maneuver.isMeaningfulDirection
-                && $0.distanceFromLegStart <= routeProgress.distanceFromLegStart
-                && !(shouldSkipRouteStartInstruction && $0.distanceFromLegStart < routeStartInstructionSkipMeters)
-        }) {
-            let activeInstructionEnd = activeInstruction.distanceFromLegStart
-            let isOutgoingWaypointSeamInstruction = !isFirstLeg
-                && activeInstruction.distanceFromLegStart <= waypointSeamInstructionDelayMeters
-                && routeProgress.distanceFromLegStart < waypointSeamInstructionDelayMeters
-            if !isOutgoingWaypointSeamInstruction,
-               routeProgress.distanceFromLegStart <= activeInstructionEnd + lookbehindMeters {
-                return (
-                    activeInstruction,
-                    totalBeforeLeg + activeInstruction.distanceFromLegStart,
-                    leg.polyline.coordinate(atDistance: activeInstruction.distanceFromLegStart)
-                )
-            }
-        }
-
-        if let instruction = leg.instructions.first(where: {
-            $0.maneuver.isMeaningfulDirection
-                && $0.distanceFromLegStart > routeProgress.distanceFromLegStart
-                && !(shouldSkipRouteStartInstruction && $0.distanceFromLegStart < routeStartInstructionSkipMeters)
-        }) {
-            return (
-                instruction,
-                totalBeforeLeg + instruction.distanceFromLegStart,
-                leg.polyline.coordinate(atDistance: instruction.distanceFromLegStart)
-            )
-        }
-
-        var foundCurrentLeg = false
-        var nextLegTotalBefore: CLLocationDistance = 0
-        for candidate in routeLegs {
-            if foundCurrentLeg,
-               let instruction = candidate.instructions.first(where: {
-                   $0.maneuver.isMeaningfulDirection
-                       && ($0.distanceFromLegStart > waypointSeamInstructionDelayMeters || !$0.maneuver.isWaypointSeamCandidate)
-               }) {
-                return (
-                    instruction,
-                    nextLegTotalBefore + instruction.distanceFromLegStart,
-                    candidate.polyline.coordinate(atDistance: instruction.distanceFromLegStart)
-                )
-            }
-
-            if candidate.id == routeProgress.legID {
-                foundCurrentLeg = true
-            }
-            nextLegTotalBefore += candidate.distance
-        }
-
-        return nil
+        return (
+            instruction,
+            selection.routeOffset,
+            selection.targetOffset,
+            leg.polyline.coordinate(atDistance: selection.instruction.targetDistanceFromLegStart)
+        )
     }
 
     private func nextInstructionFallback() -> RouteInstruction? {
@@ -3658,108 +3612,18 @@ private struct RouteLeg: Identifiable {
         self.distance = distance
         self.expectedTravelTime = expectedTravelTime
         self.polyline = polyline
-
-        var distanceFromLegStart: CLLocationDistance = 0
-        let mapKitDebugSteps = steps.enumerated().map { index, step in
-            let roundaboutExit = RouteInstruction.roundaboutExit(from: step.instructions)
-            let maneuverStartDistance = distanceFromLegStart
-            let maneuverTargetDistance = distanceFromLegStart + step.distance
-            let roundaboutApproachDiagnostic = RouteInstruction.roundaboutApproachBearingDiagnostic(
-                exit: roundaboutExit,
-                legPolyline: polyline,
-                maneuverDistance: maneuverTargetDistance,
-                previousStep: index > 0 ? steps[index - 1] : nil
-            )
-            let incomingBearing = roundaboutExit == nil
-                ? (polyline.bearing(atDistance: maneuverTargetDistance - 50) ?? (index > 0 ? steps[index - 1].polyline.lastSegmentBearingDegrees : nil))
-                : roundaboutApproachDiagnostic.bearing
-            let outgoingBearing = polyline.bearing(atDistance: maneuverTargetDistance + 50) ?? step.polyline.lastSegmentBearingDegrees
-            let roundaboutExitDiagnostic = RouteInstruction.roundaboutExitAngleDiagnostic(
-                exit: roundaboutExit,
-                legPolyline: polyline,
-                maneuverDistance: maneuverTargetDistance,
-                incomingBearing: incomingBearing
-            )
-            let sourceManeuver = DeviceManeuver(instruction: step.instructions)
-            let inferredManeuver = RouteInstruction.inferredManeuver(
-                sourceManeuver,
-                instruction: step.instructions,
-                incomingBearing: incomingBearing,
-                outgoingBearing: outgoingBearing
-            )
-            let roundaboutAngles = RouteInstruction.roundaboutExitAngles(
-                exit: roundaboutExit,
-                targetAngle: nil,
-                incomingBearing: incomingBearing,
-                outgoingBearing: outgoingBearing
-            )
-            RouteInstruction.logRoundaboutExitAngles(
-                instruction: step.instructions,
-                exit: roundaboutExit,
-                maneuverDistance: maneuverTargetDistance,
-                incomingBearing: incomingBearing,
-                outgoingBearing: outgoingBearing,
-                approachDiagnostic: roundaboutApproachDiagnostic,
-                diagnostic: roundaboutExitDiagnostic,
-                sentAngles: roundaboutAngles
-            )
-            let deviceManeuver = RouteInstruction.normalizedManeuver(
-                inferredManeuver,
-                roundaboutExit: roundaboutExit,
-                roundaboutExitAngles: roundaboutAngles,
-                incomingBearing: incomingBearing,
-                outgoingBearing: outgoingBearing
-            )
-            let skipReason: String?
-            if step.distance <= 1 {
-                skipReason = "distance <= 1m"
-            } else if !isFinalLeg && sourceManeuver == .arrive {
-                skipReason = "intermediate leg arrival"
-            } else if sourceManeuver == .continueAhead && step.instructions.isEmpty {
-                skipReason = "empty continue"
-            } else {
-                skipReason = nil
-            }
-
-            let debugStep = RouteDebugStep(
-                distanceFromLegStart: maneuverStartDistance,
-                distance: step.distance,
-                rawInstruction: step.instructions,
-                rawNotice: step.notice,
-                sourceManeuver: sourceManeuver,
-                deviceManeuver: skipReason == nil ? deviceManeuver : nil,
-                incomingBearing: incomingBearing,
-                outgoingBearing: outgoingBearing,
-                mapKitRoundaboutExit: roundaboutExit,
-                mapKitRoundaboutExitAngles: roundaboutAngles,
-                deviceRoundaboutExit: skipReason == nil && deviceManeuver == .roundabout ? roundaboutExit : nil,
-                deviceRoundaboutExitAngles: skipReason == nil && deviceManeuver == .roundabout ? roundaboutAngles : [],
-                roundaboutApproachDeviationOffset: roundaboutApproachDiagnostic.deviationOffset,
-                roundaboutApproachProbes: roundaboutApproachDiagnostic.routeApproachProbes,
-                skipReason: skipReason
-            )
-
-            distanceFromLegStart += step.distance
-            return debugStep
-        }
-        let syntheticBendSteps = RouteInstruction.syntheticBendSteps(
-            legPolyline: polyline,
-            legDistance: distance,
-            existingSteps: mapKitDebugSteps,
-            suppressStartBoundary: !isFirstLeg,
-            suppressEndBoundary: !isFinalLeg
-        )
-        let debugSteps = (mapKitDebugSteps + syntheticBendSteps)
-            .sorted { $0.distanceFromLegStart < $1.distanceFromLegStart }
-        self.debugSteps = debugSteps
+        self.debugSteps = NavigationRouteBuilder.steps(
+            polyline: polyline,
+            routeDistance: polyline.steedPilotRouteDistance,
+            mapKitSteps: steps,
+            isFirstLeg: isFirstLeg,
+            isFinalLeg: isFinalLeg
+        ).map(RouteDebugStep.init)
         self.instructions = debugSteps.compactMap(RouteInstruction.init)
     }
 }
 
-private struct ManeuverProgressWindow {
-    let signature: String
-    let startDistanceMeters: CLLocationDistance
-}
+private typealias ManeuverProgressWindow = NavigationDecisionProgressWindow
 
 private struct RideNavigationSnapshot {
     let distanceToDestinationMeters: Int
@@ -4002,6 +3866,42 @@ private struct RouteDebugStep {
     let roundaboutApproachDeviationOffset: CLLocationDistance?
     let roundaboutApproachProbes: [RoundaboutApproachBearingProbe]
     let skipReason: String?
+
+    init(distanceFromLegStart: CLLocationDistance, distance: CLLocationDistance, rawInstruction: String, rawNotice: String?, sourceManeuver: DeviceManeuver, deviceManeuver: DeviceManeuver?, incomingBearing: Int?, outgoingBearing: Int?, mapKitRoundaboutExit: Int?, mapKitRoundaboutExitAngles: [RoundaboutExitAngle], deviceRoundaboutExit: Int?, deviceRoundaboutExitAngles: [RoundaboutExitAngle], roundaboutApproachDeviationOffset: CLLocationDistance?, roundaboutApproachProbes: [RoundaboutApproachBearingProbe], skipReason: String?) {
+        self.distanceFromLegStart = distanceFromLegStart
+        self.distance = distance
+        self.rawInstruction = rawInstruction
+        self.rawNotice = rawNotice
+        self.sourceManeuver = sourceManeuver
+        self.deviceManeuver = deviceManeuver
+        self.incomingBearing = incomingBearing
+        self.outgoingBearing = outgoingBearing
+        self.mapKitRoundaboutExit = mapKitRoundaboutExit
+        self.mapKitRoundaboutExitAngles = mapKitRoundaboutExitAngles
+        self.deviceRoundaboutExit = deviceRoundaboutExit
+        self.deviceRoundaboutExitAngles = deviceRoundaboutExitAngles
+        self.roundaboutApproachDeviationOffset = roundaboutApproachDeviationOffset
+        self.roundaboutApproachProbes = roundaboutApproachProbes
+        self.skipReason = skipReason
+    }
+
+    init(_ step: NavigationRouteStep) {
+        self.distanceFromLegStart = step.distanceFromLegStart
+        self.distance = step.distance
+        self.rawInstruction = step.rawInstruction
+        self.rawNotice = step.rawNotice
+        self.sourceManeuver = DeviceManeuver(step.sourceManeuver)
+        self.deviceManeuver = step.deviceManeuver.map(DeviceManeuver.init)
+        self.incomingBearing = step.incomingBearing
+        self.outgoingBearing = step.outgoingBearing
+        self.mapKitRoundaboutExit = step.mapKitRoundaboutExit
+        self.mapKitRoundaboutExitAngles = step.mapKitRoundaboutExitAngles.map(RoundaboutExitAngle.init)
+        self.deviceRoundaboutExit = step.deviceRoundaboutExit
+        self.deviceRoundaboutExitAngles = step.deviceRoundaboutExitAngles.map(RoundaboutExitAngle.init)
+        self.roundaboutApproachDeviationOffset = step.roundaboutApproachDeviationOffset
+        self.roundaboutApproachProbes = step.roundaboutApproachProbes.map(RoundaboutApproachBearingProbe.init)
+        self.skipReason = step.skipReason
+    }
 }
 
 private struct RouteInstruction {
@@ -4021,6 +3921,14 @@ private struct RouteInstruction {
     let mapKitRoundaboutExitAngles: [RoundaboutExitAngle]
     let roundaboutApproachDeviationOffset: CLLocationDistance?
     let roundaboutApproachProbes: [RoundaboutApproachBearingProbe]
+
+    var targetDistanceFromLegStart: CLLocationDistance {
+        if rawInstruction.hasPrefix("Synthetic ") {
+            return distanceFromLegStart
+        }
+
+        return distanceFromLegStart + distance
+    }
 
     init?(_ debugStep: RouteDebugStep) {
         guard let maneuver = debugStep.deviceManeuver,
@@ -4586,6 +4494,16 @@ private struct RouteInstruction {
 private struct RoundaboutExitAngle {
     let index: Int
     let angleDegrees: Int
+
+    init(index: Int, angleDegrees: Int) {
+        self.index = index
+        self.angleDegrees = angleDegrees
+    }
+
+    init(_ angle: NavigationRoundaboutExitAngle) {
+        self.index = angle.index
+        self.angleDegrees = angle.angleDegrees
+    }
 }
 
 private struct SyntheticBendCandidate {
@@ -4609,6 +4527,16 @@ private struct RoundaboutApproachBearingDiagnostic {
 private struct RoundaboutApproachBearingProbe {
     let offset: CLLocationDistance
     let bearing: Int
+
+    init(offset: CLLocationDistance, bearing: Int) {
+        self.offset = offset
+        self.bearing = bearing
+    }
+
+    init(_ probe: NavigationRoundaboutApproachBearingProbe) {
+        self.offset = probe.offset
+        self.bearing = probe.bearing
+    }
 }
 
 private struct RoundaboutExitAngleDiagnostic {
@@ -4705,6 +4633,18 @@ private enum DeviceManeuver: String {
             case .roundabout: return "roundabout"
             case .arrive: return "arrive"
         }
+    }
+}
+
+private extension NavigationDecisionManeuver {
+    init(_ maneuver: DeviceManeuver) {
+        self = NavigationDecisionManeuver(rawValue: maneuver.rawValue) ?? .continueAhead
+    }
+}
+
+private extension DeviceManeuver {
+    init(_ maneuver: NavigationDecisionManeuver) {
+        self = DeviceManeuver(rawValue: maneuver.rawValue) ?? .continueAhead
     }
 }
 

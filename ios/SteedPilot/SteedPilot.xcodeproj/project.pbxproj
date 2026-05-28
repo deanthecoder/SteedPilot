@@ -11,6 +11,8 @@
 		100000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000012 /* ContentView.swift */; };
 		100000000000000000000003 /* BluetoothNavSender.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000013 /* BluetoothNavSender.swift */; };
 		100000000000000000000004 /* NavFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000014 /* NavFixture.swift */; };
+		100000000000000000000008 /* NavigationDecisionCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000018 /* NavigationDecisionCore.swift */; };
+		100000000000000000000009 /* NavigationRouteCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000019 /* NavigationRouteCore.swift */; };
 		100000000000000000000005 /* CoreBluetooth.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000015 /* CoreBluetooth.framework */; };
 		100000000000000000000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000016 /* Assets.xcassets */; };
 		100000000000000000000007 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000017 /* Fixtures */; };
@@ -22,6 +24,8 @@
 		100000000000000000000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		100000000000000000000013 /* BluetoothNavSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BluetoothNavSender.swift; sourceTree = "<group>"; };
 		100000000000000000000014 /* NavFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavFixture.swift; sourceTree = "<group>"; };
+		100000000000000000000018 /* NavigationDecisionCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationDecisionCore.swift; sourceTree = "<group>"; };
+		100000000000000000000019 /* NavigationRouteCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationRouteCore.swift; sourceTree = "<group>"; };
 		100000000000000000000015 /* CoreBluetooth.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreBluetooth.framework; path = System/Library/Frameworks/CoreBluetooth.framework; sourceTree = SDKROOT; };
 		100000000000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		100000000000000000000017 /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Fixtures; sourceTree = "<group>"; };
@@ -55,6 +59,8 @@
 				100000000000000000000012 /* ContentView.swift */,
 				100000000000000000000013 /* BluetoothNavSender.swift */,
 				100000000000000000000014 /* NavFixture.swift */,
+				100000000000000000000018 /* NavigationDecisionCore.swift */,
+				100000000000000000000019 /* NavigationRouteCore.swift */,
 				100000000000000000000016 /* Assets.xcassets */,
 				100000000000000000000017 /* Fixtures */,
 			);
@@ -151,6 +157,8 @@
 				100000000000000000000002 /* ContentView.swift in Sources */,
 				100000000000000000000003 /* BluetoothNavSender.swift in Sources */,
 				100000000000000000000004 /* NavFixture.swift in Sources */,
+				100000000000000000000008 /* NavigationDecisionCore.swift in Sources */,
+				100000000000000000000009 /* NavigationRouteCore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

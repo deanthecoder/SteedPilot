@@ -119,6 +119,23 @@ Replay a short BLE route sequence to the device:
 tools/steedpilot_send --replay fixtures/route-demo.json
 ```
 
+## Tests
+Run the current navigation regression checks:
+
+```sh
+tools/test_navigation
+```
+
+These cover the route-decision cases that have caused device regressions, including MapKit step distances, synthetic bends, early arrival, distant "continue for" instructions, and maneuver progress.
+
+Run the planned-route integration checks:
+
+```sh
+tools/test_route_plans
+```
+
+These ask MapKit for known routes, run the shared navigation decision engine, and check the ordered device-stage text. Current routes cover `CB23 3UG` to `CB23 3RJ`, and `CB23 3UG` to `PE19 6TW`.
+
 ![Navigation ahead](img/navigation-ahead.png)
 ![Navigation left](img/navigation-left.png)
 ![Navigation bend left](img/navigation-bend-left.png)
