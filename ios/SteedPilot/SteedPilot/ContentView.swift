@@ -21,7 +21,6 @@ struct ContentView: View {
     @StateObject private var locationProvider = LocationProvider()
     @StateObject private var keyboard = KeyboardObserver()
     @State private var routeActive = false
-    @State private var destination = "Princes Risborough"
     @State private var searchText = ""
     @State private var selectedTarget: MapTarget?
     @State private var searchMessage: String?
@@ -29,8 +28,8 @@ struct ContentView: View {
     @State private var isAddingRouteTarget = false
     @State private var cameraPosition = MapCameraPosition.region(SampleRoute.region)
     @State private var panelState = RoutePanelState.medium
+    @State private var panelDragHeight: CGFloat?
     @State private var waypointEditMode = EditMode.inactive
-    @State private var showDeveloperTools = false
     @State private var pendingLocationRecenter = false
     @State private var selectedRideMode = RideMode.directions
     @State private var smoothedDestinationBearing: Double?
@@ -84,11 +83,11 @@ struct ContentView: View {
                     Spacer(minLength: 0)
                 }
 
-                routeBuilderSheet(screenHeight: geometry.size.height, bottomInset: geometry.safeAreaInsets.bottom)
-
                 if routeActive {
                     rideStatusOverlay(screenHeight: geometry.size.height, bottomInset: geometry.safeAreaInsets.bottom)
                 }
+
+                routeBuilderSheet(screenHeight: geometry.size.height, bottomInset: geometry.safeAreaInsets.bottom)
 
                 if searchEditorPresented {
                     searchEditorOverlay(topInset: geometry.safeAreaInsets.top)
@@ -141,27 +140,6 @@ struct ContentView: View {
             .onAppear(perform: configureView)
             .onDisappear {
                 UIApplication.shared.isIdleTimerDisabled = false
-            }
-            .sheet(isPresented: $showingRouteLibrary) {
-                routeLibrarySheet
-            }
-            .sheet(isPresented: $showingSaveRouteDialog) {
-                saveRouteSheet
-            }
-            .sheet(isPresented: $showingSettings) {
-                settingsSheet
-            }
-            .sheet(isPresented: $showingMapKitDebug) {
-                MapKitDebugSheet(
-                    legs: routeLegs,
-                    snapshot: rideNavigationSnapshot(),
-                    navigationDebugLog: navigationDebugLog,
-                    clearNavigationDebugLog: clearNavigationDebugLog,
-                    exportRouteAudit: exportRouteAudit,
-                    routeAuditMessage: routeAuditMessage,
-                    distanceFormatter: formatDistance,
-                    travelTimeFormatter: formatTravelTime
-                )
             }
         }
     }
@@ -339,57 +317,29 @@ struct ContentView: View {
 
     private func routeBuilderSheet(screenHeight: CGFloat, bottomInset: CGFloat) -> some View {
         let keyboardLift = searchFocused ? max(0, keyboard.height - bottomInset) : 0
-        let contentHeight = routeBuilderHeight(for: screenHeight, keyboardLift: keyboardLift)
+        let sheetHeight = routeBuilderInteractiveHeight(for: screenHeight, bottomInset: bottomInset)
 
         return VStack(spacing: 0) {
-            Button(action: togglePanel) {
-                VStack(spacing: 8) {
-                    Capsule()
-                        .fill(Color.white.opacity(0.36))
-                        .frame(width: 52, height: 6)
-
-                    if panelState == .collapsed {
-                        Text(routeSheetTitle)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: panelState == .collapsed ? 58 : 34)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, panelState == .collapsed ? 8 : 6)
-            .padding(.bottom, panelState == .collapsed ? max(bottomInset, 12) : 0)
-            .gesture(
-                DragGesture(minimumDistance: 12)
-                    .onEnded { value in
-                        updatePanel(after: value.translation.height)
-                    }
-            )
+            routeSheetGrabber(screenHeight: screenHeight, bottomInset: bottomInset)
 
             if panelState != .collapsed {
-                Divider()
-                    .overlay(Color.white.opacity(0.10))
-
                 VStack(spacing: 12) {
-                    placeSearchRow
-                    homeQuickStartRow
-                    selectedTargetRow
-                    routeBuilderActions
-                    waypointEditList
+                    Divider()
+                        .overlay(Color.white.opacity(0.10))
+
+                    routeSheetContent
                         .frame(maxHeight: .infinity)
                 }
                 .padding(.horizontal, 14)
-                .padding(.top, 12)
+                .padding(.top, 8)
                 .padding(.bottom, bottomInset + 14)
-                .frame(height: contentHeight)
-                .clipped()
             }
         }
         .foregroundStyle(.white)
+        .frame(maxWidth: .infinity)
+        .frame(height: sheetHeight, alignment: .top)
         .background(
-            Color(red: 0.045, green: 0.050, blue: 0.060).opacity(0.96),
+            Color(red: 0.045, green: 0.050, blue: 0.060),
             in: UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18)
         )
         .overlay(alignment: .top) {
@@ -401,6 +351,51 @@ struct ContentView: View {
         .animation(.snappy(duration: 0.22), value: panelState)
         .animation(.snappy(duration: 0.22), value: keyboardLift)
         .ignoresSafeArea(edges: .bottom)
+        .sheet(isPresented: $showingRouteLibrary) {
+            routeLibrarySheet
+        }
+        .sheet(isPresented: $showingSaveRouteDialog) {
+            saveRouteSheet
+        }
+        .sheet(isPresented: $showingSettings) {
+            settingsSheet
+        }
+        .sheet(isPresented: $showingMapKitDebug) {
+            MapKitDebugSheet(
+                legs: routeLegs,
+                snapshot: rideNavigationSnapshot(),
+                navigationDebugLog: navigationDebugLog,
+                clearNavigationDebugLog: clearNavigationDebugLog,
+                exportRouteAudit: exportRouteAudit,
+                routeAuditMessage: routeAuditMessage,
+                distanceFormatter: formatDistance,
+                travelTimeFormatter: formatTravelTime
+            )
+        }
+    }
+
+    private func routeSheetGrabber(screenHeight: CGFloat, bottomInset: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(Color.white.opacity(0.32))
+                .frame(width: 52, height: 6)
+                .padding(.top, 10)
+                .padding(.bottom, 12)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .gesture(routePanelDragGesture(screenHeight: screenHeight, bottomInset: bottomInset))
+    }
+
+    private var routeSheetContent: some View {
+        VStack(spacing: 12) {
+            placeSearchRow
+            homeQuickStartRow
+            selectedTargetRow
+            routeBuilderActions
+            waypointEditList
+                .frame(maxHeight: .infinity)
+        }
     }
 
     private var placeSearchRow: some View {
@@ -1243,169 +1238,6 @@ struct ContentView: View {
         }
     }
 
-    private func routeEditor(maxHeight: CGFloat, bottomInset: CGFloat) -> some View {
-        VStack(spacing: 10) {
-            Button(action: togglePanel) {
-                VStack(spacing: 8) {
-                    Capsule()
-                        .fill(Color.white.opacity(0.28))
-                        .frame(width: 52, height: 6)
-
-                    if panelState == .collapsed {
-                        Text("Route")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: panelState == .collapsed ? 70 : 18)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, panelState == .collapsed ? 6 : 10)
-            .padding(.bottom, panelState == .collapsed ? max(bottomInset, 14) : 0)
-            .gesture(
-                DragGesture(minimumDistance: 12)
-                    .onEnded { value in
-                        updatePanel(after: value.translation.height)
-                    }
-            )
-
-            if panelState != .collapsed {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 12) {
-                        routeControls
-                        waypointList
-                        routeTools
-                        developerDisclosure
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, bottomInset + 14)
-                }
-                .frame(maxHeight: maxHeight)
-            }
-        }
-        .foregroundStyle(.white)
-        .background(.ultraThinMaterial, in: UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
-        .overlay(alignment: .top) {
-            UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        }
-    }
-
-    private var routeControls: some View {
-        HStack(spacing: 10) {
-            TextField("Destination", text: $destination)
-                .textInputAutocapitalization(.words)
-                .disableAutocorrection(true)
-                .padding(.horizontal, 12)
-                .frame(height: 44)
-                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            Button(action: routeActive ? endRoute : startRoute) {
-                Text(routeActive ? "End" : "Start")
-            }
-            .buttonStyle(PrimaryRouteButtonStyle(active: routeActive))
-            .disabled(destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-    }
-
-    private var waypointList: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(waypoints.enumerated()), id: \.element.id) { index, waypoint in
-                WaypointRow(
-                    waypoint: waypoint,
-                    canMoveUp: index > 1,
-                    canMoveDown: index < waypoints.count - 2,
-                    canDelete: waypoint.kind == .stop,
-                    moveUp: { moveWaypoint(at: index, by: -1) },
-                    moveDown: { moveWaypoint(at: index, by: 1) },
-                    delete: { deleteWaypoint(at: index) }
-                )
-
-                if waypoint.id != waypoints.last?.id {
-                    Divider()
-                        .overlay(Color.white.opacity(0.08))
-                        .padding(.leading, 44)
-                }
-            }
-        }
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private var routeTools: some View {
-        HStack(spacing: 10) {
-            Button(action: addWaypoint) {
-                Label("Add Waypoint", systemImage: "plus.circle")
-            }
-
-            Spacer()
-
-            Button(action: reverseRoute) {
-                Label("Reverse", systemImage: "arrow.up.arrow.down")
-            }
-
-            Button(role: .destructive, action: clearWaypoints) {
-                Label("Clear", systemImage: "trash")
-            }
-        }
-        .buttonStyle(SecondaryRouteButtonStyle())
-        .padding(.vertical, 2)
-    }
-
-    private var developerDisclosure: some View {
-        DisclosureGroup(isExpanded: $showDeveloperTools) {
-            developerTools
-                .padding(.top, 10)
-        } label: {
-            Label("Developer fixtures", systemImage: "wrench.and.screwdriver")
-                .font(.subheadline.weight(.semibold))
-        }
-        .tint(.cyan)
-    }
-
-    private var developerTools: some View {
-        VStack(spacing: 10) {
-            if let replayRoute {
-                Button(sender.isReplaying ? "Stop Replay" : "Replay Demo Route") {
-                    if sender.isReplaying {
-                        sender.cancelReplay()
-                    } else {
-                        sender.replay(replayRoute)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            Button(action: exportRouteAudit) {
-                Label("Export Route Audit", systemImage: "doc.text.magnifyingglass")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .disabled(routeLegs.isEmpty)
-
-            if let routeAuditMessage {
-                Text(routeAuditMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
-                ForEach(fixtures) { fixture in
-                    Button(fixture.title) {
-                        sender.send(fixture.data)
-                    }
-                    .font(.caption)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
     @ViewBuilder
     private var homeQuickStartRow: some View {
         if waypoints.isEmpty, let homeLocation {
@@ -1473,14 +1305,6 @@ struct ContentView: View {
         }
 
         return visible
-    }
-
-    private var routeSheetTitle: String {
-        if waypoints.isEmpty {
-            return "Add route start"
-        }
-
-        return "\(waypoints.count) route point\(waypoints.count == 1 ? "" : "s")"
     }
 
     private var canStartRide: Bool {
@@ -1558,70 +1382,71 @@ struct ContentView: View {
         }
     }
 
-    private func routeBuilderHeight(for screenHeight: CGFloat) -> CGFloat {
-        switch panelState {
-            case .collapsed:
-                return 0
-            case .medium:
-                return canStartRide ? min(430, screenHeight * 0.50) : min(330, screenHeight * 0.38)
-            case .expanded:
-                return min(610, screenHeight * 0.70)
-        }
-    }
-
-    private func routeBuilderHeight(for screenHeight: CGFloat, keyboardLift: CGFloat) -> CGFloat {
-        let normalHeight = routeBuilderHeight(for: screenHeight)
-        guard keyboardLift > 0 else {
-            return normalHeight
-        }
-
-        let gripAndChromeHeight: CGFloat = 6 + 34 + 1
-        let topMargin: CGFloat = 18
-        let availableHeight = screenHeight - keyboardLift - gripAndChromeHeight - topMargin
-        return max(180, min(normalHeight, availableHeight))
-    }
-
     private func routeBuilderVisibleHeight(for screenHeight: CGFloat, bottomInset: CGFloat) -> CGFloat {
-        switch panelState {
-            case .collapsed:
-                return 8 + 58 + max(bottomInset, 12)
-            case .medium, .expanded:
-                return 6 + 34 + 1 + routeBuilderHeight(for: screenHeight)
-        }
+        routeBuilderVisibleHeight(for: panelState, screenHeight: screenHeight, bottomInset: bottomInset)
     }
 
-    private func panelHeight(for screenHeight: CGFloat) -> CGFloat {
-        switch panelState {
+    private func routeBuilderVisibleHeight(for state: RoutePanelState, screenHeight: CGFloat, bottomInset: CGFloat) -> CGFloat {
+        switch state {
             case .collapsed:
-                return 0
+                return 34 + max(bottomInset, 12)
             case .medium:
-                return min(330, screenHeight * 0.42)
+                return max(320, screenHeight * 0.42)
             case .expanded:
-                return min(590, screenHeight * 0.72)
+                return max(480, screenHeight * 0.82)
         }
     }
 
-    private func togglePanel() {
+    private func setPanelState(_ state: RoutePanelState) {
         withAnimation(.snappy(duration: 0.22)) {
-            switch panelState {
-                case .collapsed:
-                    panelState = .medium
-                case .medium:
-                    panelState = .collapsed
-                case .expanded:
-                    panelState = .medium
-            }
+            panelState = state
         }
     }
 
-    private func updatePanel(after verticalDrag: CGFloat) {
-        withAnimation(.snappy(duration: 0.22)) {
-            if verticalDrag > 35 {
-                panelState = panelState == .expanded ? .medium : .collapsed
-            } else if verticalDrag < -35 {
-                panelState = panelState == .collapsed ? .medium : .expanded
+    private func routePanelDragGesture(screenHeight: CGFloat, bottomInset: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
+            .onChanged { value in
+                let startHeight = routeBuilderVisibleHeight(for: panelState, screenHeight: screenHeight, bottomInset: bottomInset)
+                panelDragHeight = startHeight + value.startLocation.y - value.location.y
             }
+            .onEnded { value in
+                let startHeight = routeBuilderVisibleHeight(for: panelState, screenHeight: screenHeight, bottomInset: bottomInset)
+                let projectedHeight = startHeight + value.startLocation.y - value.predictedEndLocation.y
+                let targetState = routePanelState(for: projectedHeight, screenHeight: screenHeight, bottomInset: bottomInset)
+                let targetHeight = routeBuilderVisibleHeight(for: targetState, screenHeight: screenHeight, bottomInset: bottomInset)
+
+                panelDragHeight = targetHeight
+                setPanelState(targetState)
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+                    panelDragHeight = nil
+                }
+            }
+    }
+
+    private func routeBuilderInteractiveHeight(for screenHeight: CGFloat, bottomInset: CGFloat) -> CGFloat {
+        let currentHeight = routeBuilderVisibleHeight(for: screenHeight, bottomInset: bottomInset)
+        guard let panelDragHeight else {
+            return currentHeight
         }
+
+        let minimumHeight = routeBuilderVisibleHeight(for: .collapsed, screenHeight: screenHeight, bottomInset: bottomInset)
+        let maximumHeight = routeBuilderVisibleHeight(for: .expanded, screenHeight: screenHeight, bottomInset: bottomInset)
+
+        return min(max(panelDragHeight, minimumHeight), maximumHeight)
+    }
+
+    private func routePanelState(for projectedHeight: CGFloat, screenHeight: CGFloat, bottomInset: CGFloat) -> RoutePanelState {
+        let currentHeight = routeBuilderVisibleHeight(for: panelState, screenHeight: screenHeight, bottomInset: bottomInset)
+        guard abs(projectedHeight - currentHeight) > 24 else {
+            return panelState
+        }
+
+        return RoutePanelState.allCases.min { first, second in
+            let firstDistance = abs(routeBuilderVisibleHeight(for: first, screenHeight: screenHeight, bottomInset: bottomInset) - projectedHeight)
+            let secondDistance = abs(routeBuilderVisibleHeight(for: second, screenHeight: screenHeight, bottomInset: bottomInset) - projectedHeight)
+            return firstDistance < secondDistance
+        } ?? panelState
     }
 
     private func startRoute() {
@@ -1636,7 +1461,7 @@ struct ContentView: View {
         sender.send(payload)
         routeActive = true
         UIApplication.shared.isIdleTimerDisabled = true
-        panelState = .collapsed
+        setPanelState(.collapsed)
     }
 
     private func configureView() {
@@ -1647,7 +1472,7 @@ struct ContentView: View {
 
     private func endRoute() {
         stopActiveRoute(sendClear: true)
-        panelState = .medium
+        setPanelState(.medium)
     }
 
     private func stopActiveRoute(sendClear: Bool) {
@@ -2599,7 +2424,7 @@ struct ContentView: View {
     private func showSearchEditor() {
         withAnimation(.snappy(duration: 0.22)) {
             searchEditorPresented = true
-            panelState = .medium
+            setPanelState(.medium)
         }
 
         DispatchQueue.main.async {
@@ -2862,7 +2687,7 @@ struct ContentView: View {
         let waypoint = RouteWaypoint(kind: .stop, number: nextNumber, name: "New waypoint", coordinate: CLLocationCoordinate2D(latitude: 51.735, longitude: -0.650))
         waypoints.insert(waypoint, at: max(1, waypoints.count - 1))
         renumberWaypoints()
-        panelState = .expanded
+        setPanelState(.expanded)
     }
 
     private func moveWaypoint(at index: Int, by offset: Int) {
@@ -3164,55 +2989,6 @@ private struct SelectAllTextField: UIViewRepresentable {
             textField.resignFirstResponder()
             return true
         }
-    }
-}
-
-private struct WaypointRow: View {
-    let waypoint: RouteWaypoint
-    let canMoveUp: Bool
-    let canMoveDown: Bool
-    let canDelete: Bool
-    let moveUp: () -> Void
-    let moveDown: () -> Void
-    let delete: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            WaypointBadge(waypoint: waypoint)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(waypoint.name)
-                    .font(.subheadline.weight(.semibold))
-                Text(waypoint.kind.title)
-                    .font(.caption)
-                    .foregroundStyle(waypoint.kind.color)
-            }
-
-            Spacer()
-
-            HStack(spacing: 12) {
-                Button(action: moveUp) {
-                    Image(systemName: "chevron.up")
-                }
-                .disabled(!canMoveUp)
-
-                Button(action: moveDown) {
-                    Image(systemName: "chevron.down")
-                }
-                .disabled(!canMoveDown)
-
-                if canDelete {
-                    Button(role: .destructive, action: delete) {
-                        Image(systemName: "trash")
-                    }
-                }
-            }
-            .font(.caption)
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 }
 
@@ -4690,7 +4466,7 @@ private enum DistanceUnitPreference: String, CaseIterable, Identifiable {
     }
 }
 
-private enum RoutePanelState {
+private enum RoutePanelState: CaseIterable {
     case collapsed
     case medium
     case expanded
