@@ -10,11 +10,14 @@ bool I2C_Read(uint8_t Driver_addr, uint8_t Reg_addr, uint8_t *Reg_data, uint32_t
 {
   Wire.beginTransmission(Driver_addr);
   Wire.write(Reg_addr); 
-  if ( Wire.endTransmission(true)){
+  if ( Wire.endTransmission(false)){
     printf("The I2C transmission fails. - I2C Read\r\n");
     return -1;
   }
-  Wire.requestFrom(Driver_addr, Length);
+  if (Wire.requestFrom(Driver_addr, Length) != Length) {
+    printf("The I2C request fails. - I2C Read\r\n");
+    return -1;
+  }
   for (int i = 0; i < Length; i++) {
     *Reg_data++ = Wire.read();
   }

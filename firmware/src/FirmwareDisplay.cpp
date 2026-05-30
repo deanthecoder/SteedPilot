@@ -150,6 +150,7 @@ bool FirmwareDisplay::begin() {
     }
 
     esp_lcd_panel_disp_on_off(_panel, true);
+    _awake = true;
 
     _frame = (uint16_t*)heap_caps_malloc(LcdWidth * LcdHeight * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!_frame) {
@@ -170,6 +171,26 @@ void FirmwareDisplay::splash(uint8_t opacity) {
     present();
 }
 
+void FirmwareDisplay::setAwake(bool awake) {
+    if (!_panel || _awake == awake) {
+        return;
+    }
+
+    if (awake) {
+        esp_lcd_panel_disp_on_off(_panel, true);
+        digitalWrite(LcdBacklightPin, HIGH);
+    } else {
+        digitalWrite(LcdBacklightPin, LOW);
+        esp_lcd_panel_disp_on_off(_panel, false);
+    }
+
+    _awake = awake;
+}
+
+bool FirmwareDisplay::isAwake() const {
+    return _awake;
+}
+
 int FirmwareDisplay::width() const {
     return LcdWidth;
 }
@@ -186,6 +207,10 @@ void FirmwareDisplay::clear(SteedPilot::Color color) {
 }
 
 void FirmwareDisplay::present() {
+    if (!_awake) {
+        return;
+    }
+
     esp_lcd_panel_draw_bitmap(_panel, 0, 0, LcdWidth, LcdHeight, _frame);
 }
 

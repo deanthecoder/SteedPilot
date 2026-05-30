@@ -37,6 +37,20 @@ public:
     void splash(uint8_t opacity);
 
     /**
+     * Enables or disables the LCD panel and backlight for low-power idle periods.
+     *
+     * @param awake True to show the panel, false to blank it.
+     */
+    void setAwake(bool awake);
+
+    /**
+     * Gets whether the panel/backlight are currently enabled.
+     *
+     * @return True when the display is awake.
+     */
+    bool isAwake() const;
+
+    /**
      * Gets the display width in pixels.
      *
      * @return Display width.
@@ -155,6 +169,7 @@ private:
 
     esp_lcd_panel_handle_t _panel = nullptr;
     uint16_t* _frame = nullptr;
+    bool _awake = false;
 
     uint16_t rgb565(SteedPilot::Color color) const;
     void resetDisplayViaExpander();

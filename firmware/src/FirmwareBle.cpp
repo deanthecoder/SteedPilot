@@ -35,6 +35,7 @@ public:
      */
     void onConnect(BLEServer* server) override {
         (void)server;
+        Serial.println("BLE connected");
         if (owner) {
             owner->setLinkState(SteedPilot::LinkState::Connected);
         }
@@ -51,6 +52,7 @@ public:
         }
 
         server->startAdvertising();
+        Serial.println("BLE disconnected; advertising restarted");
     }
 };
 
