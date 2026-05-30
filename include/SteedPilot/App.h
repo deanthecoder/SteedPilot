@@ -81,8 +81,10 @@ private:
     uint32_t _timeMs = 0;
     float _displayTripProgress = -1.0f;
     float _displayManeuverProgress = -1.0f;
+    float _displayDestinationBearingDegrees = -1000.0f;
     int _lastRenderedTripProgress = -2;
     int _lastRenderedManeuverProgress = -2;
+    int _lastRenderedDestinationBearingDegrees = -1000;
 
     /**
      * Renders the turn-by-turn navigation screen.

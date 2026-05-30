@@ -135,12 +135,51 @@ float easedProgress(float current, int target, uint32_t elapsedMs) {
     return current + (((float)target - current) * alpha);
 }
 
+float normalizedDegrees(float degrees) {
+    while (degrees < 0.0f) {
+        degrees += 360.0f;
+    }
+    while (degrees >= 360.0f) {
+        degrees -= 360.0f;
+    }
+
+    return degrees;
+}
+
+float shortestAngleDelta(float current, float target) {
+    float delta = normalizedDegrees(target) - normalizedDegrees(current);
+    if (delta > 180.0f) {
+        delta -= 360.0f;
+    } else if (delta < -180.0f) {
+        delta += 360.0f;
+    }
+
+    return delta;
+}
+
+float easedAngle(float current, int target, uint32_t elapsedMs) {
+    if (current < -360.0f) {
+        return normalizedDegrees((float)target);
+    }
+
+    const float alpha = elapsedMs >= 500 ? 1.0f : (float)elapsedMs / 500.0f;
+    return normalizedDegrees(current + shortestAngleDelta(current, (float)target) * alpha);
+}
+
 int roundedProgress(float value) {
     if (value < 0.0f) {
         return -1;
     }
 
     return clampProgress((int)(value + 0.5f));
+}
+
+int roundedDegrees(float value) {
+    if (value < -360.0f) {
+        return -1000;
+    }
+
+    return (int)(normalizedDegrees(value) + 0.5f) % 360;
 }
 
 void drawTripProgressArc(Display& display, float tripProgress) {
@@ -591,9 +630,13 @@ void App::setState(const NavState& state) {
     if (_displayManeuverProgress < 0.0f && state.maneuverProgressRemaining >= 0) {
         _displayManeuverProgress = (float)state.maneuverProgressRemaining;
     }
+    if (_displayDestinationBearingDegrees < -360.0f) {
+        _displayDestinationBearingDegrees = normalizedDegrees((float)state.destinationBearingDegrees);
+    }
 
     _lastRenderedTripProgress = -2;
     _lastRenderedManeuverProgress = -2;
+    _lastRenderedDestinationBearingDegrees = -1000;
 }
 
 const NavState& App::state() const {
@@ -604,17 +647,22 @@ void App::tick(uint32_t elapsedMs) {
     _timeMs += elapsedMs;
     _displayTripProgress = easedProgress(_displayTripProgress, _state.tripProgressComplete, elapsedMs);
     _displayManeuverProgress = easedProgress(_displayManeuverProgress, _state.maneuverProgressRemaining, elapsedMs);
+    _displayDestinationBearingDegrees = easedAngle(_displayDestinationBearingDegrees, _state.destinationBearingDegrees, elapsedMs);
 }
 
 bool App::isAnimating() const {
     return (_state.tripProgressComplete >= 0 && _displayTripProgress >= 0.0f && std::fabs(_displayTripProgress - (float)_state.tripProgressComplete) > 0.5f)
-        || (_state.maneuverProgressRemaining >= 0 && _displayManeuverProgress >= 0.0f && std::fabs(_displayManeuverProgress - (float)_state.maneuverProgressRemaining) > 0.5f);
+        || (_state.maneuverProgressRemaining >= 0 && _displayManeuverProgress >= 0.0f && std::fabs(_displayManeuverProgress - (float)_state.maneuverProgressRemaining) > 0.5f)
+        || (_state.mode == DisplayMode::Destination && _displayDestinationBearingDegrees >= -360.0f && std::fabs(shortestAngleDelta(_displayDestinationBearingDegrees, (float)_state.destinationBearingDegrees)) > 0.5f);
 }
 
 bool App::needsProgressAnimationFrame() const {
     const int trip = roundedProgress(_displayTripProgress);
     const int maneuver = roundedProgress(_displayManeuverProgress);
-    return trip != _lastRenderedTripProgress || maneuver != _lastRenderedManeuverProgress;
+    const int bearing = roundedDegrees(_displayDestinationBearingDegrees);
+    return trip != _lastRenderedTripProgress
+        || maneuver != _lastRenderedManeuverProgress
+        || (_state.mode == DisplayMode::Destination && bearing != _lastRenderedDestinationBearingDegrees);
 }
 
 void App::render(Display& display) {
@@ -654,6 +702,7 @@ void App::render(Display& display) {
 
     _lastRenderedTripProgress = roundedProgress(_displayTripProgress);
     _lastRenderedManeuverProgress = roundedProgress(_displayManeuverProgress);
+    _lastRenderedDestinationBearingDegrees = roundedDegrees(_displayDestinationBearingDegrees);
 }
 
 void App::renderProgressAnimation(Display& display) {
@@ -680,12 +729,7 @@ void App::renderProgressAnimation(Display& display) {
             display.present();
         }
     } else if (_state.mode == DisplayMode::Destination) {
-        {
-#ifdef STEEDPILOT_PROFILE_RENDER
-            ProfileSection section(activeProfile.arcsUs);
-#endif
-            drawTripProgressArc(display, _displayTripProgress);
-        }
+        renderDestination(display);
         {
 #ifdef STEEDPILOT_PROFILE_RENDER
             ProfileSection section(activeProfile.presentUs);
@@ -700,6 +744,7 @@ void App::renderProgressAnimation(Display& display) {
 
     _lastRenderedTripProgress = roundedProgress(_displayTripProgress);
     _lastRenderedManeuverProgress = roundedProgress(_displayManeuverProgress);
+    _lastRenderedDestinationBearingDegrees = roundedDegrees(_displayDestinationBearingDegrees);
 }
 
 void App::renderNavigation(Display& display) {
@@ -787,7 +832,7 @@ void App::renderDestination(Display& display) {
 #ifdef STEEDPILOT_PROFILE_RENDER
         ProfileSection section(activeProfile.graphicUs);
 #endif
-        drawImageTransformed(display, cx, cy - 34 + GraphicOffsetY, SteedPilotDirectionHeading, (float)_state.destinationBearingDegrees);
+        drawImageTransformed(display, cx, cy - 34 + GraphicOffsetY, SteedPilotDirectionHeading, _displayDestinationBearingDegrees);
     }
     {
 #ifdef STEEDPILOT_PROFILE_RENDER
