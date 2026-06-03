@@ -33,6 +33,13 @@ public:
     void begin(PacketCallback callback);
 
     /**
+     * Updates the readable/notifiable device-status characteristic.
+     *
+     * @param json Null-terminated JSON status payload.
+     */
+    void publishDeviceStatus(const char* json);
+
+    /**
      * Gets the current link state inferred from BLE server activity.
      *
      * @return Current BLE link state.

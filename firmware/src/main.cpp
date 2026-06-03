@@ -10,7 +10,6 @@
 
 #include "FirmwareDisplay.h"
 #include "FirmwareBle.h"
-#include "FirmwareMotion.h"
 #include "FirmwareTouch.h"
 
 #include "SteedPilot/App.h"
@@ -28,31 +27,31 @@ constexpr uint32_t SplashFadeInMs = 900;
 constexpr uint32_t SplashHoldMs = 2000;
 constexpr uint32_t SplashFadeOutMs = 900;
 constexpr uint32_t SplashTotalMs = SplashFadeInMs + SplashHoldMs + SplashFadeOutMs;
-constexpr uint32_t NoPhoneTimeoutMs = 10000;
+constexpr uint32_t NoPhoneTimeoutMs = 15000;
+constexpr uint32_t NavigationNoPhoneTimeoutMs = 20000;
 constexpr uint32_t AnimationFrameMs = 50;
-constexpr uint32_t IdleSleepAfterMs = 2 * 60 * 1000;
 constexpr uint32_t ActiveLoopDelayMs = 16;
-constexpr uint32_t PowerSaveLoopDelayMs = 250;
 constexpr uint32_t ActiveCpuMhz = 240;
-constexpr uint32_t PowerSaveCpuMhz = 80;
 constexpr uint32_t TouchWakeIgnoreMs = 1200;
 constexpr uint32_t TouchTapDebounceMs = 80;
 constexpr uint32_t TouchSleepQuietMs = 1500;
 constexpr uint32_t TouchSleepQuietTimeoutMs = 3000;
 constexpr uint32_t UserOffDeepSleepDelayMs = 1000;
 constexpr uint32_t ImmediateWakeGuardMs = 1500;
+constexpr uint32_t DeviceStatusPublishMs = 5 * 60 * 1000;
+constexpr uint8_t BatteryHoldPin = 7;
+constexpr uint8_t BatteryAdcPin = 8;
+constexpr float BatteryAdcDivider = 3.0f;
 
 RTC_DATA_ATTR bool userParked = false;
 RTC_DATA_ATTR uint64_t userParkedSinceUs = 0;
 
 FirmwareDisplay display;
 FirmwareBle ble;
-FirmwareMotion motion;
 FirmwareTouch touch;
 SteedPilot::App app;
 bool liveBleMode = false;
 bool noPhoneVisible = false;
-bool powerSaveMode = false;
 volatile bool pendingBleState = false;
 volatile uint32_t touchInterruptCount = 0;
 volatile uint32_t lastTouchInterruptUs = 0;
@@ -61,8 +60,10 @@ uint32_t lastWakefulActivityMs = 0;
 uint32_t bootMs = 0;
 uint32_t lastTouchTapMs = 0;
 uint32_t userOffRequestedMs = 0;
+uint32_t lastDeviceStatusMs = 0;
 bool haveBleState = false;
 bool userOffPending = false;
+bool deviceStatusPublishedForConnection = false;
 SteedPilot::NavState lastBleState;
 SteedPilot::NavPacket nextBlePacket;
 
@@ -72,6 +73,90 @@ void IRAM_ATTR handleTouchInterrupt() {
         lastTouchInterruptUs = nowUs;
         touchInterruptCount = touchInterruptCount + 1;
     }
+}
+
+void holdBatteryPower() {
+    pinMode(BatteryHoldPin, OUTPUT);
+    digitalWrite(BatteryHoldPin, HIGH);
+    gpio_hold_dis((gpio_num_t)BatteryHoldPin);
+    gpio_deep_sleep_hold_dis();
+    Serial.println("Battery power hold enabled");
+}
+
+void holdBatteryPowerDuringDeepSleep() {
+    pinMode(BatteryHoldPin, OUTPUT);
+    digitalWrite(BatteryHoldPin, HIGH);
+    gpio_hold_en((gpio_num_t)BatteryHoldPin);
+    gpio_deep_sleep_hold_en();
+}
+
+void beginBatteryMonitor() {
+    analogReadResolution(12);
+    analogSetPinAttenuation(BatteryAdcPin, ADC_11db);
+    pinMode(BatteryAdcPin, INPUT);
+}
+
+uint32_t readBatteryMillivolts() {
+    constexpr int SampleCount = 8;
+    uint32_t totalMv = 0;
+
+    for (int i = 0; i < SampleCount; ++i) {
+        totalMv += (uint32_t)analogReadMilliVolts(BatteryAdcPin);
+        delay(2);
+    }
+
+    const float adcMv = (float)totalMv / (float)SampleCount;
+    return (uint32_t)(adcMv * BatteryAdcDivider + 0.5f);
+}
+
+uint8_t batteryPercentFromMillivolts(uint32_t batteryMv) {
+    struct Point {
+        uint16_t mv;
+        uint8_t percent;
+    };
+
+    static constexpr Point curve[] = {
+        {3300, 0},
+        {3500, 5},
+        {3600, 12},
+        {3700, 25},
+        {3800, 42},
+        {3900, 60},
+        {4000, 78},
+        {4100, 92},
+        {4200, 100},
+    };
+
+    if (batteryMv <= curve[0].mv) {
+        return curve[0].percent;
+    }
+
+    for (size_t i = 1; i < sizeof(curve) / sizeof(curve[0]); ++i) {
+        if (batteryMv <= curve[i].mv) {
+            const Point lower = curve[i - 1];
+            const Point upper = curve[i];
+            const uint32_t spanMv = upper.mv - lower.mv;
+            const uint32_t spanPercent = upper.percent - lower.percent;
+            return (uint8_t)(lower.percent + ((batteryMv - lower.mv) * spanPercent) / spanMv);
+        }
+    }
+
+    return 100;
+}
+
+void publishDeviceStatus(uint32_t now, const char* reason) {
+    const uint32_t batteryMv = readBatteryMillivolts();
+    const uint8_t batteryPercent = batteryPercentFromMillivolts(batteryMv);
+    char json[128] = {};
+    snprintf(json, sizeof(json),
+        "{\"v\":1,\"batteryMv\":%lu,\"batteryPercent\":%u}",
+        (unsigned long)batteryMv,
+        (unsigned)batteryPercent);
+
+    ble.publishDeviceStatus(json);
+    lastDeviceStatusMs = now;
+    deviceStatusPublishedForConnection = true;
+    Serial.printf("Device status sent: %s battery=%lu mV %u%%\n", reason, (unsigned long)batteryMv, (unsigned)batteryPercent);
 }
 
 uint8_t splashOpacity(uint32_t elapsedMs) {
@@ -192,28 +277,6 @@ void applyBlePacket(const SteedPilot::NavPacket& packet) {
     Serial.printf("BLE packet queued: type=%d fields=%lu\n", (int)packet.type, (unsigned long)packet.fields);
 }
 
-void enterPowerSave(uint32_t now) {
-    if (powerSaveMode) {
-        return;
-    }
-
-    display.setAwake(false);
-    setCpuFrequencyMhz(PowerSaveCpuMhz);
-    powerSaveMode = true;
-    Serial.printf("Power save entered after %lu ms idle\n", (unsigned long)(now - lastWakefulActivityMs));
-}
-
-void leavePowerSave(const char* reason) {
-    if (!powerSaveMode) {
-        return;
-    }
-
-    setCpuFrequencyMhz(ActiveCpuMhz);
-    display.setAwake(true);
-    powerSaveMode = false;
-    Serial.printf("Power save exited: %s\n", reason);
-}
-
 bool wokeFromTouch() {
     return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
 }
@@ -289,6 +352,7 @@ void enterPreDisplayDeepSleep(const char* reason) {
     }
 
     prepareTouchWakePinForSleep();
+    holdBatteryPowerDuringDeepSleep();
     userParkedSinceUs = esp_rtc_get_time_us();
     Serial.printf("Deep sleep entered before display init: %s\n", reason);
     Serial.flush();
@@ -303,7 +367,6 @@ void cancelUserOff(uint32_t now) {
     userParked = false;
     display.setAwake(true);
     setCpuFrequencyMhz(ActiveCpuMhz);
-    powerSaveMode = false;
     lastWakefulActivityMs = now;
     Serial.println("Tap: user display on");
 }
@@ -331,6 +394,7 @@ void enterDeepSleep(const char* reason) {
     }
 
     prepareTouchWakePinForSleep();
+    holdBatteryPowerDuringDeepSleep();
     userParkedSinceUs = esp_rtc_get_time_us();
     Serial.printf("Deep sleep entered: %s\n", reason);
     Serial.flush();
@@ -420,10 +484,16 @@ void renderWaitingForRoute() {
     Serial.println("Waiting-for-route screen rendered");
 }
 
+uint32_t noPhoneTimeoutMs() {
+    return haveBleState ? NavigationNoPhoneTimeoutMs : NoPhoneTimeoutMs;
+}
+
 } // namespace
 
 void setup() {
     Serial.begin(115200);
+    holdBatteryPower();
+    beginBatteryMonitor();
     bootMs = millis();
     const esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
     releaseTouchWakePinFromSleep();
@@ -459,7 +529,6 @@ void setup() {
         }
     }
 
-    motion.begin();
     touch.begin();
     noInterrupts();
     touchInterruptCount = 0;
@@ -484,16 +553,14 @@ void loop() {
         return;
     }
 
-    if (motion.update(now)) {
-        lastWakefulActivityMs = now;
-        leavePowerSave("motion");
-        if (haveBleState) {
-            app.setState(lastBleState);
-            app.render(display);
-            noPhoneVisible = false;
-        } else {
-            renderWaitingForApp();
+    if (ble.linkState() == SteedPilot::LinkState::Connected) {
+        if (!deviceStatusPublishedForConnection) {
+            publishDeviceStatus(now, "connect");
+        } else if (now - lastDeviceStatusMs >= DeviceStatusPublishMs) {
+            publishDeviceStatus(now, "periodic");
         }
+    } else {
+        deviceStatusPublishedForConnection = false;
     }
 
     app.tick(now - lastTick);
@@ -504,7 +571,6 @@ void loop() {
         if (nextBlePacket.type == SteedPilot::NavPacketType::Heartbeat) {
             Serial.println("BLE heartbeat received");
         } else if (nextBlePacket.type == SteedPilot::NavPacketType::State) {
-            leavePowerSave("BLE state");
             haveBleState = true;
             lastBleState = nextBlePacket.state;
             app.setState(lastBleState);
@@ -512,7 +578,6 @@ void loop() {
             noPhoneVisible = false;
             Serial.printf("BLE state rendered: mode=%d maneuver=%d distance=%ld\n", (int)nextBlePacket.state.mode, (int)nextBlePacket.state.maneuver, (long)nextBlePacket.state.distanceToManeuverMeters);
         } else if (haveBleState) {
-            leavePowerSave("BLE update");
             SteedPilot::NavState state = lastBleState;
             applyUpdate(state, nextBlePacket);
             lastBleState = state;
@@ -534,16 +599,9 @@ void loop() {
         lastAnimationFrameMs = now;
     }
 
-    if (liveBleMode && !pendingBleState && !noPhoneVisible && now - lastPacketMs >= NoPhoneTimeoutMs) {
+    if (liveBleMode && !pendingBleState && !noPhoneVisible && now - lastPacketMs >= noPhoneTimeoutMs()) {
         renderNoPhone();
     }
 
-    if (!pendingBleState
-        && !powerSaveMode
-        && motion.isStillFor(now, IdleSleepAfterMs)
-        && now - lastWakefulActivityMs >= IdleSleepAfterMs) {
-        enterPowerSave(now);
-    }
-
-    delay(powerSaveMode ? PowerSaveLoopDelayMs : ActiveLoopDelayMs);
+    delay(ActiveLoopDelayMs);
 }

@@ -23,8 +23,10 @@ namespace {
 constexpr const char* DeviceName = "SteedPilot";
 constexpr const char* ServiceUuid = "c6372234-79d6-4a5e-8a57-08a3b7a8a7d1";
 constexpr const char* StateCharacteristicUuid = "f6c8d747-fc2c-4ef4-906a-7c8cbf552814";
+constexpr const char* DeviceStatusCharacteristicUuid = "fa62492e-5c6f-4a8d-9853-1a996b0c7c5d";
 
 FirmwareBle* owner = nullptr;
+BLECharacteristic* deviceStatusCharacteristic = nullptr;
 
 class SteedPilotBleServerCallbacks final : public BLEServerCallbacks {
 public:
@@ -110,12 +112,30 @@ void FirmwareBle::begin(PacketCallback callback) {
     stateCharacteristic->setCallbacks(&characteristicCallbacks);
     stateCharacteristic->setValue("{\"v\":1,\"device\":\"SteedPilot\"}");
 
+    deviceStatusCharacteristic = service->createCharacteristic(
+        DeviceStatusCharacteristicUuid,
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    deviceStatusCharacteristic->setValue("{\"v\":1,\"batteryPercent\":null}");
+
     service->start();
     server->getAdvertising()->addServiceUUID(ServiceUuid);
     server->startAdvertising();
     setLinkState(SteedPilot::LinkState::Pairing);
 
     Serial.println("SteedPilot BLE advertising");
+}
+
+void FirmwareBle::publishDeviceStatus(const char* json) {
+    if (!deviceStatusCharacteristic || !json) {
+        return;
+    }
+
+    deviceStatusCharacteristic->setValue(json);
+    if (_linkState == SteedPilot::LinkState::Connected) {
+        deviceStatusCharacteristic->notify();
+    }
+
+    Serial.printf("BLE device status published: %.80s\n", json);
 }
 
 SteedPilot::LinkState FirmwareBle::linkState() const {

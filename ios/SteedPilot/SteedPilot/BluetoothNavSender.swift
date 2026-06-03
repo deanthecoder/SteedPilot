@@ -12,17 +12,29 @@ import Combine
 import CoreBluetooth
 import Foundation
 
+struct DeviceBatteryStatus: Equatable {
+    let millivolts: Int
+    let percent: Int
+
+    var displayText: String {
+        String(format: "%d%% (%.2f V)", percent, Double(millivolts) / 1000)
+    }
+}
+
 final class BluetoothNavSender: NSObject, ObservableObject {
     @Published private(set) var status = "Idle"
     @Published private(set) var isConnected = false
     @Published private(set) var isReplaying = false
     @Published private(set) var replayProgress = ""
+    @Published private(set) var deviceBatteryStatus: DeviceBatteryStatus?
 
     private let serviceUuid = CBUUID(string: "c6372234-79d6-4a5e-8a57-08a3b7a8a7d1")
     private let stateCharacteristicUuid = CBUUID(string: "f6c8d747-fc2c-4ef4-906a-7c8cbf552814")
+    private let deviceStatusCharacteristicUuid = CBUUID(string: "fa62492e-5c6f-4a8d-9853-1a996b0c7c5d")
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var characteristic: CBCharacteristic?
+    private var deviceStatusCharacteristic: CBCharacteristic?
     private var pendingPayloads: [Data] = []
     private var packet = Data()
     private var currentPayload: Data?
@@ -297,6 +309,7 @@ extension BluetoothNavSender: CBCentralManagerDelegate {
         isConnected = false
         isConnecting = false
         characteristic = nil
+        deviceStatusCharacteristic = nil
         clearWriteState(requeueCurrentPayload: true)
         stopHeartbeatTimer()
         scanForSteedPilot()
@@ -324,7 +337,7 @@ extension BluetoothNavSender: CBPeripheralDelegate {
             return
         }
 
-        peripheral.discoverCharacteristics([stateCharacteristicUuid], for: service)
+        peripheral.discoverCharacteristics([stateCharacteristicUuid, deviceStatusCharacteristicUuid], for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
@@ -341,6 +354,12 @@ extension BluetoothNavSender: CBPeripheralDelegate {
         }
 
         self.characteristic = characteristic
+        if let deviceStatusCharacteristic = service.characteristics?.first(where: { $0.uuid == deviceStatusCharacteristicUuid }) {
+            self.deviceStatusCharacteristic = deviceStatusCharacteristic
+            peripheral.setNotifyValue(true, for: deviceStatusCharacteristic)
+            peripheral.readValue(for: deviceStatusCharacteristic)
+        }
+
         isConnected = true
         startHeartbeatTimer()
         if !pendingPayloads.isEmpty {
@@ -360,5 +379,28 @@ extension BluetoothNavSender: CBPeripheralDelegate {
 
         stopWriteTimeoutTimer()
         writeNextChunk()
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard error == nil,
+              characteristic.uuid == deviceStatusCharacteristicUuid,
+              let data = characteristic.value else {
+            return
+        }
+
+        updateDeviceStatus(from: data)
+    }
+
+    private func updateDeviceStatus(from data: Data) {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let millivolts = object["batteryMv"] as? Int,
+              let percent = object["batteryPercent"] as? Int else {
+            return
+        }
+
+        deviceBatteryStatus = DeviceBatteryStatus(
+            millivolts: millivolts,
+            percent: min(100, max(0, percent))
+        )
     }
 }

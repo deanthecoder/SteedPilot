@@ -631,9 +631,6 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(selectedRideMode.activeTitle)
                             .font(.subheadline.weight(.semibold))
-                        Text("SteedPilot \(sender.status.lowercased())")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
 
                     Spacer()
@@ -1095,6 +1092,15 @@ struct ContentView: View {
 
                 Section("Route") {
                     Toggle("Avoid motorways", isOn: $avoidMotorways)
+                }
+
+                Section("Device") {
+                    LabeledContent("Connection", value: sender.status)
+
+                    LabeledContent("Battery") {
+                        Text(sender.deviceBatteryStatus?.displayText ?? "Unknown")
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Home") {
