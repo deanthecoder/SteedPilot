@@ -356,6 +356,8 @@ struct ContentView: View {
                 legs: routeLegs,
                 snapshot: rideNavigationSnapshot(),
                 navigationDebugLog: navigationDebugLog,
+                currentSpeedMph: currentSpeedMph,
+                speedWarningLimitMph: speedWarningLimitMph,
                 clearNavigationDebugLog: clearNavigationDebugLog,
                 exportRouteAudit: exportRouteAudit,
                 routeAuditMessage: routeAuditMessage,
@@ -3243,6 +3245,8 @@ private struct MapKitDebugSheet: View {
     let legs: [RouteLeg]
     let snapshot: RideNavigationSnapshot
     let navigationDebugLog: [String]
+    let currentSpeedMph: Int
+    let speedWarningLimitMph: Int
     let clearNavigationDebugLog: () -> Void
     let exportRouteAudit: () -> Void
     let routeAuditMessage: String?
@@ -3285,6 +3289,7 @@ private struct MapKitDebugSheet: View {
                     DebugValueRow(label: "Route progress", value: distanceFormatter(snapshot.routeProgressMeters))
                     DebugValueRow(label: "Route gap", value: snapshot.distanceToRouteMeters >= 0 ? distanceFormatter(snapshot.distanceToRouteMeters) : "unknown")
                     DebugValueRow(label: "Off route", value: snapshot.isOffRoute ? "yes" : "no")
+                    DebugValueRow(label: "Speed", value: "\(currentSpeedMph) / \(speedWarningLimitMph) mph")
                     DebugValueRow(label: "Selected offset", value: snapshot.selectedInstructionOffsetMeters.map(distanceFormatter) ?? "none")
                     DebugValueRow(label: "Selected source", value: snapshot.selectedInstructionText)
                     DebugValueRow(label: "Decision", value: snapshot.selectionReason)
