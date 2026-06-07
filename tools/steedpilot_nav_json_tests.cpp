@@ -46,10 +46,27 @@ void speedPayloadParsesFromNestedObject() {
     expect(packet.state.speedUnit == SteedPilot::SpeedUnit::Mph, "speed unit is mph");
 }
 
+void speedUpdateCanPatchCurrentOnly() {
+    const char* json =
+        "{"
+        "\"v\":1,"
+        "\"type\":\"update\","
+        "\"speed\":{\"current\":47}"
+        "}";
+
+    SteedPilot::NavPacket packet;
+    expect(SteedPilot::parseNavPacketJson(json, packet), "current-only speed update parses");
+    expect(packet.type == SteedPilot::NavPacketType::Update, "speed packet is an update");
+    expect((packet.fields & SteedPilot::NavFieldCurrentSpeed) != 0, "current-only update has current speed field");
+    expect((packet.fields & SteedPilot::NavFieldSpeedLimit) == 0, "current-only update leaves speed limit absent");
+    expect(packet.state.currentSpeed == 47, "current-only update speed value is 47 mph");
+}
+
 }
 
 int main() {
     speedPayloadParsesFromNestedObject();
+    speedUpdateCanPatchCurrentOnly();
 
     if (failures > 0) {
         std::cout << "\n" << failures << " nav json test" << (failures == 1 ? "" : "s") << " failed.\n";

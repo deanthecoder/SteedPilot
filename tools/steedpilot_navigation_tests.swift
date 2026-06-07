@@ -57,6 +57,17 @@ private struct NavigationTests {
             try assertEqual(afterBend.distanceToManeuverMeters, 271, "Next real turn should count down to the turn step start")
             try assertTrue(afterBend.maneuver != .arrive, "Route must not arrive after the first bend")
         },
+        TestCase(name: "Route start instruction is skipped before next useful target") {
+            let instructions = [
+                makeInstruction(index: 0, start: 0, distance: 230, raw: "Turn right onto Ermine Street North", maneuver: .turnRight),
+                makeInstruction(index: 1, start: 230, distance: 20, raw: "Synthetic bend left", maneuver: .bendLeft),
+                makeInstruction(index: 2, start: 520, distance: 400, raw: "Turn left", maneuver: .turnLeft)
+            ]
+
+            let first = snapshot(total: 1200, instructions: instructions, progress: 0).snapshot
+            try assertEqual(first.maneuver, .bendLeft, "A zero-distance route-start instruction should not hide the first real target")
+            try assertEqual(first.distanceToManeuverMeters, 230, "First visible target should be the bend distance")
+        },
         TestCase(name: "Shortly before a MapKit turn does not count down through the following road") {
             let instructions = [
                 makeInstruction(index: 0, start: 1000, distance: 1600, raw: "Turn left onto Long Road", maneuver: .turnLeft),
