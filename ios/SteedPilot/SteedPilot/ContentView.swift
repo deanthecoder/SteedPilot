@@ -182,22 +182,13 @@ struct ContentView: View {
 
                 ForEach(debugBendinessPoints) { point in
                     Annotation("", coordinate: point.coordinate) {
-                        VStack(spacing: 2) {
-                            Circle()
-                                .fill(point.color)
-                                .frame(width: point.size, height: point.size)
-                                .overlay(
-                                    Circle()
-                                        .stroke(.black.opacity(0.75), lineWidth: 1.5)
-                                )
-
-                            Text(point.text)
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(.black.opacity(0.7), in: Capsule())
-                        }
+                        Circle()
+                            .fill(point.color)
+                            .frame(width: point.size, height: point.size)
+                            .overlay(
+                                Circle()
+                                    .stroke(.black.opacity(0.75), lineWidth: 1.5)
+                            )
                     }
                 }
 
@@ -684,6 +675,19 @@ struct ContentView: View {
                 .disabled(routeLegs.isEmpty)
             }
 
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.turn.up.right.diamond")
+                    .font(.caption)
+                    .foregroundStyle(.cyan)
+
+                Text(debugNextInstructionText)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             HStack(spacing: 8) {
                 Button(action: resetDebugRideProgress) {
                     Image(systemName: "location")
@@ -718,6 +722,33 @@ struct ContentView: View {
             ProgressView(value: totalDistance > 0 ? activeDistance / totalDistance : 0)
                 .tint(.cyan)
         }
+    }
+
+    private var debugNextInstructionText: String {
+        guard routeActive,
+              !routeLegs.isEmpty,
+              totalRouteDistance > 0 else {
+            return "Next: no route"
+        }
+
+        let debugDistance = debugRideDistanceMeters ?? 0
+        guard let routeProgress = simulatedRouteProgress(at: debugDistance) else {
+            return "Next: no route progress"
+        }
+
+        let snapshot = rideNavigationSnapshot(totalDistance: totalRouteDistance, routeProgress: routeProgress, currentCoordinate: nil)
+        guard let instruction = snapshot.selectedInstruction else {
+            return "Next: \(snapshot.selectedInstructionText)"
+        }
+
+        let targetOffset = snapshot.selectedInstructionTargetOffsetMeters
+            ?? snapshot.selectedInstructionOffsetMeters
+            ?? routeProgress.distanceFromRouteStart
+        let maneuver = instruction.maneuver.debugTitle
+        let distance = formatDebugInstructionDistance(max(targetOffset - routeProgress.distanceFromRouteStart, 0))
+        let instructionText = instruction.rawInstruction.isEmpty ? "No instruction text" : instruction.rawInstruction
+
+        return "Next: \(maneuver) in \(distance) - \(instructionText)"
     }
 
     private var debugMapCoordinate: CLLocationCoordinate2D? {
@@ -773,22 +804,6 @@ struct ContentView: View {
         }
 
         var labels: [DebugMapArrowLabel] = []
-        labels.append(
-            DebugMapArrowLabel(
-                coordinate: coordinate.coordinate(movedMeters: 24, bearingDegrees: 45),
-                text: "DEVICE TARGET \(instruction.maneuver.debugTitle.uppercased()) \(formatDistance(CLLocationDistance(snapshot.distanceToManeuverMeters)))",
-                color: .purple
-            )
-        )
-        let startText = snapshot.selectedInstructionOffsetMeters.map { Int($0.rounded()) } ?? -1
-        let endText = snapshot.selectedInstructionEndMeters.map { Int($0.rounded()) } ?? -1
-        labels.append(
-            DebugMapArrowLabel(
-                coordinate: coordinate.coordinate(movedMeters: 48, bearingDegrees: 45),
-                text: "START \(startText)m END \(endText)m TARGET \(Int(targetOffset.rounded()))m",
-                color: .yellow
-            )
-        )
         if let incomingBearing = instruction.incomingBearing {
             labels.append(
                 DebugMapArrowLabel(
@@ -804,27 +819,6 @@ struct ContentView: View {
                     coordinate: coordinate.coordinate(movedMeters: 78, bearingDegrees: outgoingBearing),
                     text: "OUT \(outgoingBearing)",
                     color: .cyan
-                )
-            )
-        }
-        if let angle = NavigationRouteBuilder.roundaboutDisplayAngle(incomingBearing: instruction.incomingBearing, outgoingBearing: instruction.outgoingBearing) {
-            labels.append(
-                DebugMapArrowLabel(
-                    coordinate: coordinate.coordinate(movedMeters: 58, bearingDegrees: 0),
-                    text: "DELTA \(angle)",
-                    color: .white
-                )
-            )
-        }
-        if !instruction.roundaboutExitAngles.isEmpty {
-            let sentAngles = instruction.roundaboutExitAngles
-                .map { "\($0.index):\($0.angleDegrees)" }
-                .joined(separator: " ")
-            labels.append(
-                DebugMapArrowLabel(
-                    coordinate: coordinate.coordinate(movedMeters: 58, bearingDegrees: 180),
-                    text: "SENT \(sentAngles)",
-                    color: .mint
                 )
             )
         }
@@ -878,7 +872,6 @@ struct ContentView: View {
                         points.append(
                             DebugBendinessPoint(
                                 coordinate: coordinate,
-                                text: "\(deviation)",
                                 color: bendinessColor(for: deviation),
                                 size: bendinessSize(for: deviation)
                             )
@@ -2617,6 +2610,20 @@ struct ContentView: View {
         }
     }
 
+    private func formatDebugInstructionDistance(_ meters: CLLocationDistance) -> String {
+        let clampedMeters = max(meters, 0)
+        let smallDistanceThreshold: CLLocationDistance = distanceUnitPreference == .miles ? 160.9344 : 1000
+        if clampedMeters > 0 && clampedMeters < smallDistanceThreshold {
+            if clampedMeters < 1 {
+                return "<1 m"
+            }
+
+            return "\(Int(clampedMeters.rounded())) m"
+        }
+
+        return formatDistance(clampedMeters)
+    }
+
     private func clearSelectedTarget() {
         selectedTarget = nil
         searchMessage = nil
@@ -3607,7 +3614,6 @@ private struct DebugMapPoint: Identifiable {
 private struct DebugBendinessPoint: Identifiable {
     let id = UUID()
     let coordinate: CLLocationCoordinate2D
-    let text: String
     let color: Color
     let size: CGFloat
 }
