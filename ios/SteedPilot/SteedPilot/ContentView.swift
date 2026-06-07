@@ -1633,6 +1633,7 @@ struct ContentView: View {
             "send=\(snapshot.maneuver.debugTitle)",
             "toManeuver=\(formatDebugDistance(CLLocationDistance(snapshot.distanceToManeuverMeters)))",
             "toDest=\(formatDebugDistance(CLLocationDistance(snapshot.distanceToDestinationMeters)))",
+            "speed=\(currentSpeedMph)/\(speedWarningLimitMph)mph",
             "maneuverProgress=\(snapshot.maneuverProgressRemaining)%",
             "routeProgress=\(formatDebugDistance(snapshot.routeProgressMeters))",
             "routeGap=\(formatDebugDistance(snapshot.distanceToRouteMeters))",
