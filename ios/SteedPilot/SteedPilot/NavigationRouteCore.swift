@@ -70,7 +70,7 @@ enum NavigationRouteBuilder {
     }
 
     private static func targetDistance(for step: NavigationRouteStep) -> CLLocationDistance {
-        step.rawInstruction.hasPrefix("Synthetic ") ? step.distanceFromLegStart : step.distanceFromLegStart + step.distance
+        step.distanceFromLegStart
     }
 
     static func syntheticBendDiagnostics(polyline: MKPolyline, routeDistance: CLLocationDistance, mapKitSteps: [MKRoute.Step], isFirstLeg: Bool, isFinalLeg: Bool) -> [NavigationSyntheticBendDiagnostic] {
@@ -88,17 +88,17 @@ enum NavigationRouteBuilder {
         return mapKitSteps.enumerated().map { index, step in
             let roundaboutExit = roundaboutExit(from: step.instructions)
             let maneuverStartDistance = distanceFromLegStart
-            let maneuverTargetDistance = distanceFromLegStart + step.distance
+            let maneuverGeometryDistance = roundaboutExit == nil ? maneuverStartDistance : maneuverStartDistance + step.distance
             let approach = roundaboutApproachBearingDiagnostic(
                 exit: roundaboutExit,
                 legPolyline: polyline,
-                maneuverDistance: maneuverTargetDistance,
+                maneuverDistance: maneuverGeometryDistance,
                 previousStep: index > 0 ? mapKitSteps[index - 1] : nil
             )
             let incomingBearing = roundaboutExit == nil
-                ? (polyline.steedPilotBearing(atDistance: maneuverTargetDistance - 50) ?? (index > 0 ? mapKitSteps[index - 1].polyline.steedPilotLastSegmentBearingDegrees : nil))
+                ? (polyline.steedPilotBearing(atDistance: maneuverStartDistance - 50) ?? (index > 0 ? mapKitSteps[index - 1].polyline.steedPilotLastSegmentBearingDegrees : nil))
                 : approach.bearing
-            let outgoingBearing = polyline.steedPilotBearing(atDistance: maneuverTargetDistance + 50) ?? step.polyline.steedPilotLastSegmentBearingDegrees
+            let outgoingBearing = polyline.steedPilotBearing(atDistance: maneuverGeometryDistance + 50) ?? step.polyline.steedPilotLastSegmentBearingDegrees
             let sourceManeuver = NavigationDecisionManeuver(instruction: step.instructions)
             let inferredManeuver = inferredManeuver(
                 sourceManeuver,

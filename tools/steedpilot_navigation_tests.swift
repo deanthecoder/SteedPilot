@@ -32,16 +32,16 @@ private struct NavigationTests {
     private static let legID = UUID()
     private static let aGMotorsInstructions = [
         makeInstruction(index: 0, start: 230.0, distance: 20.0, raw: "Synthetic bend left", maneuver: .bendLeft),
-        makeInstruction(index: 1, start: 0.0, distance: 520.7, raw: "Turn left onto Ermine Street North", maneuver: .turnLeft),
-        makeInstruction(index: 2, start: 0.0, distance: 1642.8, raw: "Turn left onto Stirling Way", maneuver: .turnLeft),
-        makeInstruction(index: 3, start: 0.0, distance: 1946.3, raw: "Turn right into the car park", maneuver: .turnRight),
+        makeInstruction(index: 1, start: 520.7, distance: 1122.1, raw: "Turn left onto Ermine Street North", maneuver: .turnLeft),
+        makeInstruction(index: 2, start: 1642.8, distance: 303.5, raw: "Turn left onto Stirling Way", maneuver: .turnLeft),
+        makeInstruction(index: 3, start: 1946.3, distance: 87.7, raw: "Turn right into the car park", maneuver: .turnRight),
         makeInstruction(index: 4, start: 2034.0, distance: 0.0, raw: "Arrive at the destination", maneuver: .arrive)
     ]
 
     private static let tests: [TestCase] = [
-        TestCase(name: "MapKit instructions target the end of the step") {
+        TestCase(name: "MapKit instructions target the start of the step") {
             let routeInstruction = makeInstruction(index: 0, start: 0, distance: 520.7, raw: "Turn left onto Ermine Street North", maneuver: .turnLeft)
-            try assertApprox(routeInstruction.targetDistanceFromLegStart, 520.7, "MapKit instructions must count down to maneuver distance")
+            try assertApprox(routeInstruction.targetDistanceFromLegStart, 0, "MapKit instructions must count down to the step start")
         },
         TestCase(name: "Synthetic bends target the detected bend start") {
             let routeInstruction = makeInstruction(index: 0, start: 230, distance: 20, raw: "Synthetic bend left", maneuver: .bendLeft)
@@ -54,7 +54,21 @@ private struct NavigationTests {
 
             let afterBend = snapshot(total: 2034, instructions: aGMotorsInstructions, progress: 250).snapshot
             try assertEqual(afterBend.maneuver, .turnLeft, "After the first bend, the next real turn should be selected")
+            try assertEqual(afterBend.distanceToManeuverMeters, 271, "Next real turn should count down to the turn step start")
             try assertTrue(afterBend.maneuver != .arrive, "Route must not arrive after the first bend")
+        },
+        TestCase(name: "Shortly before a MapKit turn does not count down through the following road") {
+            let instructions = [
+                makeInstruction(index: 0, start: 1000, distance: 1600, raw: "Turn left onto Long Road", maneuver: .turnLeft),
+                makeInstruction(index: 1, start: 2600, distance: 100, raw: "Turn right", maneuver: .turnRight)
+            ]
+
+            let beforeTurn = snapshot(total: 3000, instructions: instructions, progress: 995).snapshot
+            try assertEqual(beforeTurn.maneuver, .turnLeft, "Turn should already be selected shortly before the step starts")
+            try assertEqual(beforeTurn.distanceToManeuverMeters, 5, "Distance should count down to the turn, not the end of the following road")
+
+            let afterLookbehind = snapshot(total: 3000, instructions: instructions, progress: 1016).snapshot
+            try assertEqual(afterLookbehind.maneuver, .turnRight, "Once past the turn lookbehind, selection should move to the next target")
         },
         TestCase(name: "A G Motors route has no phantom roundabout") {
             try assertTrue(!aGMotorsInstructions.contains { $0.maneuver == .roundabout }, "Route should not inject a roundabout for A G Motors")
@@ -69,7 +83,7 @@ private struct NavigationTests {
         },
         TestCase(name: "Continue message leads into the next target instead of hiding it") {
             let instructions = [
-                makeInstruction(index: 0, start: 0, distance: 3800, raw: "At the roundabout, take the first exit", maneuver: .roundabout)
+                makeInstruction(index: 0, start: 3800, distance: 200, raw: "At the roundabout, take the first exit", maneuver: .roundabout)
             ]
 
             let farAway = snapshot(total: 4200, instructions: instructions, progress: 0).snapshot

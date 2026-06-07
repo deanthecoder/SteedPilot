@@ -106,7 +106,7 @@ struct NavigationDecisionInstruction {
     let roundaboutExit: Int?
 
     var targetDistanceFromLegStart: CLLocationDistance {
-        rawInstruction.hasPrefix("Synthetic ") ? distanceFromLegStart : distanceFromLegStart + distance
+        distanceFromLegStart
     }
 }
 
@@ -187,7 +187,7 @@ enum NavigationDecisionEngine {
             maneuver: maneuver,
             selectedInstruction: instruction,
             selectedInstructionOffsetMeters: instructionSelection?.routeOffset,
-            selectedInstructionEndMeters: instructionSelection.map(\.targetOffset),
+            selectedInstructionEndMeters: instructionSelection.map { $0.routeOffset + $0.instruction.distance },
             selectedInstructionTargetOffsetMeters: selectedInstructionTargetOffset,
             routeProgressMeters: routeProgress.distanceFromRouteStart,
             selectionReason: selectionReason

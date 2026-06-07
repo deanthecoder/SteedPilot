@@ -74,7 +74,6 @@ private struct RoutePlanTests {
             destination: "CB23 3RJ, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.arrive, textContains: "Arrive")
             ]
         ),
@@ -84,7 +83,6 @@ private struct RoutePlanTests {
             destination: "PE19 6TW, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.roundabout, textContains: "exit 1", angleRange: -125 ... -95),
                 ExpectedStage(.roundabout, textContains: "exit 2", angleRange: 80 ... 115),
                 ExpectedStage(.arrive, textContains: "Arrive")
@@ -96,13 +94,12 @@ private struct RoutePlanTests {
             destination: "Franks Farm, CB23 4EY, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.roundabout, textContains: "exit 3", angleRange: 80 ... 115),
+                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.bendRight, textContains: "Bend right"),
-                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.arrive, textContains: "Arrive")
             ]
@@ -178,8 +175,8 @@ private struct RoutePlanTests {
                 return NavigationDecisionInstruction(
                     legID: legID,
                     index: index,
-                    distanceFromLegStart: stage.maneuver == .arrive || isSynthetic ? target : 0,
-                    distance: stage.maneuver == .arrive || isSynthetic ? 0 : target,
+                    distanceFromLegStart: target,
+                    distance: 0,
                     rawInstruction: stage.mapKitInstruction,
                     maneuver: stage.maneuver,
                     roundaboutExit: NavigationRouteBuilder.roundaboutExit(from: stage.mapKitInstruction)
@@ -319,7 +316,7 @@ private extension DeviceStage {
 
 private extension NavigationRouteStep {
     var targetDistanceFromLegStart: CLLocationDistance {
-        rawInstruction.hasPrefix("Synthetic ") ? distanceFromLegStart : distanceFromLegStart + distance
+        distanceFromLegStart
     }
 }
 
