@@ -47,6 +47,43 @@ private struct NavigationTests {
             let routeInstruction = makeInstruction(index: 0, start: 230, distance: 20, raw: "Synthetic bend left", maneuver: .bendLeft)
             try assertApprox(routeInstruction.targetDistanceFromLegStart, 230, "Synthetic bend instructions must target their start marker")
         },
+        TestCase(name: "Roundabout countdown targets the approach entry") {
+            let instructions = [
+                makeInstruction(index: 0, start: 1027, target: 1000, distance: 80, raw: "At the roundabout, take the second exit", maneuver: .roundabout)
+            ]
+
+            let approaching = snapshot(total: 1500, instructions: instructions, progress: 973).snapshot
+            try assertEqual(approaching.maneuver, .roundabout, "Roundabout should be selected before the entry point")
+            try assertEqual(approaching.distanceToManeuverMeters, 27, "Roundabout countdown should target entry, not exit")
+
+            let inside = snapshot(total: 1500, instructions: instructions, progress: 1001).snapshot
+            try assertEqual(inside.maneuver, .roundabout, "Roundabout should remain selected after passing entry")
+            try assertEqual(inside.distanceToManeuverMeters, 0, "Roundabout countdown should not keep pointing ahead after passing entry")
+        },
+        TestCase(name: "Roundabout holds active until the exit zone") {
+            let instructions = [
+                makeInstruction(index: 0, start: 1027, target: 1000, distance: 80, raw: "At the roundabout, take the first exit", maneuver: .roundabout),
+                makeInstruction(index: 1, start: 1200, target: 1200, distance: 90, raw: "At the roundabout, take the second exit", maneuver: .roundabout)
+            ]
+
+            let onRoundabout = snapshot(total: 1500, instructions: instructions, progress: 1050).snapshot
+            try assertEqual(onRoundabout.selectedInstruction?.index, 0, "Current roundabout should hold while inside its route span")
+            try assertEqual(onRoundabout.maneuver, .roundabout, "Current roundabout maneuver should stay active in the hold zone")
+            try assertEqual(onRoundabout.distanceToManeuverMeters, 0, "Current roundabout distance should remain at zero in the hold zone")
+
+            let afterExitBuffer = snapshot(total: 1500, instructions: instructions, progress: 1123).snapshot
+            try assertEqual(afterExitBuffer.selectedInstruction?.index, 1, "Selection should advance after the roundabout exit buffer")
+            try assertEqual(afterExitBuffer.distanceToManeuverMeters, 77, "Next roundabout countdown should resume after leaving the first")
+        },
+        TestCase(name: "Long MapKit roundabout span releases after exit buffer") {
+            let instructions = [
+                makeInstruction(index: 0, start: 7113, target: 7113, distance: 180, raw: "At the roundabout, take the first exit", maneuver: .roundabout),
+                makeInstruction(index: 1, start: 7293, target: 7293, distance: 134, raw: "Arrive at the destination", maneuver: .arrive)
+            ]
+
+            let afterExitBuffer = snapshot(total: 7427, instructions: instructions, progress: 7213).snapshot
+            try assertEqual(afterExitBuffer.selectedInstruction?.index, 1, "Selection should not keep a long MapKit roundabout step active 100m after entry")
+        },
         TestCase(name: "A G Motors route does not finish after first bend") {
             let first = snapshot(total: 2034, instructions: aGMotorsInstructions, progress: 0).snapshot
             try assertEqual(first.maneuver, .bendLeft, "First instruction should be the bend")
@@ -154,6 +191,20 @@ private struct NavigationTests {
             legID: legID,
             index: index,
             distanceFromLegStart: start,
+            targetDistanceFromLegStart: start,
+            distance: distance,
+            rawInstruction: raw,
+            maneuver: maneuver,
+            roundaboutExit: nil
+        )
+    }
+
+    private static func makeInstruction(index: Int, start: CLLocationDistance, target: CLLocationDistance, distance: CLLocationDistance, raw: String, maneuver: NavigationDecisionManeuver) -> NavigationDecisionInstruction {
+        NavigationDecisionInstruction(
+            legID: legID,
+            index: index,
+            distanceFromLegStart: start,
+            targetDistanceFromLegStart: target,
             distance: distance,
             rawInstruction: raw,
             maneuver: maneuver,

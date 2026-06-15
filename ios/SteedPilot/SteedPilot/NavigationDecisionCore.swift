@@ -100,14 +100,11 @@ struct NavigationDecisionInstruction {
     let legID: UUID
     let index: Int
     let distanceFromLegStart: CLLocationDistance
+    let targetDistanceFromLegStart: CLLocationDistance
     let distance: CLLocationDistance
     let rawInstruction: String
     let maneuver: NavigationDecisionManeuver
     let roundaboutExit: Int?
-
-    var targetDistanceFromLegStart: CLLocationDistance {
-        distanceFromLegStart
-    }
 }
 
 struct NavigationDecisionLeg {
@@ -209,6 +206,7 @@ enum NavigationDecisionEngine {
         }
 
         let lookbehindMeters: CLLocationDistance = 15
+        let roundaboutExitLookbehindMeters: CLLocationDistance = 15
         let routeStartInstructionSkipMeters: CLLocationDistance = 25
         let waypointSeamInstructionDelayMeters: CLLocationDistance = 35
         let shouldSkipRouteStartInstruction = isFirstLeg
@@ -220,12 +218,13 @@ enum NavigationDecisionEngine {
                 && target <= routeProgress.distanceFromLegStart
                 && !(shouldSkipRouteStartInstruction && target < routeStartInstructionSkipMeters)
         }) {
-            let activeInstructionEnd = activeInstruction.targetDistanceFromLegStart
+            let activeInstructionEnd = activeInstruction.activeSelectionEndDistance
+            let activeInstructionLookbehind = activeInstruction.maneuver == .roundabout ? roundaboutExitLookbehindMeters : lookbehindMeters
             let isOutgoingWaypointSeamInstruction = !isFirstLeg
                 && activeInstruction.targetDistanceFromLegStart <= waypointSeamInstructionDelayMeters
                 && routeProgress.distanceFromLegStart < waypointSeamInstructionDelayMeters
             if !isOutgoingWaypointSeamInstruction,
-               routeProgress.distanceFromLegStart <= activeInstructionEnd + lookbehindMeters {
+               routeProgress.distanceFromLegStart <= activeInstructionEnd + activeInstructionLookbehind {
                 return NavigationDecisionSelection(
                     instruction: activeInstruction,
                     routeOffset: totalBeforeLeg + activeInstruction.distanceFromLegStart,
@@ -295,5 +294,16 @@ enum NavigationDecisionEngine {
         let range = max(window.startDistanceMeters, 1)
         let progress = Int(((remaining / range) * 100).rounded())
         return (max(0, min(100, progress)), window)
+    }
+}
+
+private extension NavigationDecisionInstruction {
+    var activeSelectionEndDistance: CLLocationDistance {
+        guard maneuver == .roundabout else {
+            return targetDistanceFromLegStart
+        }
+
+        let roundaboutHoldSpanMeters: CLLocationDistance = 75
+        return targetDistanceFromLegStart + min(max(distance, 0), roundaboutHoldSpanMeters)
     }
 }

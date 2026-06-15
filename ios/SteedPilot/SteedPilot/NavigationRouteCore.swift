@@ -24,6 +24,7 @@ struct NavigationRoundaboutApproachBearingProbe {
 
 struct NavigationRouteStep {
     let distanceFromLegStart: CLLocationDistance
+    let targetDistanceFromLegStart: CLLocationDistance
     let distance: CLLocationDistance
     let rawInstruction: String
     let rawNotice: String?
@@ -66,11 +67,7 @@ enum NavigationRouteBuilder {
             suppressStartBoundary: !isFirstLeg,
             suppressEndBoundary: !isFinalLeg
         )
-        return (mapKitDebugSteps + syntheticBends).sorted { targetDistance(for: $0) < targetDistance(for: $1) }
-    }
-
-    private static func targetDistance(for step: NavigationRouteStep) -> CLLocationDistance {
-        step.distanceFromLegStart
+        return (mapKitDebugSteps + syntheticBends).sorted { $0.distanceFromLegStart < $1.distanceFromLegStart }
     }
 
     static func syntheticBendDiagnostics(polyline: MKPolyline, routeDistance: CLLocationDistance, mapKitSteps: [MKRoute.Step], isFirstLeg: Bool, isFinalLeg: Bool) -> [NavigationSyntheticBendDiagnostic] {
@@ -85,7 +82,7 @@ enum NavigationRouteBuilder {
 
     private static func navigationSteps(polyline: MKPolyline, mapKitSteps: [MKRoute.Step], isFinalLeg: Bool) -> [NavigationRouteStep] {
         var distanceFromLegStart: CLLocationDistance = 0
-        return mapKitSteps.enumerated().map { index, step in
+        let steps = mapKitSteps.enumerated().flatMap { index, step -> [NavigationRouteStep] in
             let roundaboutExit = roundaboutExit(from: step.instructions)
             let maneuverStartDistance = distanceFromLegStart
             let maneuverGeometryDistance = roundaboutExit == nil ? maneuverStartDistance : maneuverStartDistance + step.distance
@@ -95,10 +92,27 @@ enum NavigationRouteBuilder {
                 maneuverDistance: maneuverGeometryDistance,
                 previousStep: index > 0 ? mapKitSteps[index - 1] : nil
             )
+            let targetDistance = roundaboutTargetDistance(
+                exit: roundaboutExit,
+                stepStartDistance: maneuverStartDistance,
+                geometryDistance: maneuverGeometryDistance,
+                approachDeviationOffset: approach.deviationOffset
+            )
+            let stepStartIncomingBearing = polyline.steedPilotBearing(atDistance: maneuverStartDistance - 50) ?? (index > 0 ? mapKitSteps[index - 1].polyline.steedPilotLastSegmentBearingDegrees : nil)
+            let stepStartOutgoingBearing = polyline.steedPilotBearing(atDistance: maneuverStartDistance + 50) ?? step.polyline.steedPilotFirstSegmentBearingDegrees
             let incomingBearing = roundaboutExit == nil
-                ? (polyline.steedPilotBearing(atDistance: maneuverStartDistance - 50) ?? (index > 0 ? mapKitSteps[index - 1].polyline.steedPilotLastSegmentBearingDegrees : nil))
+                ? stepStartIncomingBearing
                 : approach.bearing
-            let outgoingBearing = polyline.steedPilotBearing(atDistance: maneuverGeometryDistance + 50) ?? step.polyline.steedPilotLastSegmentBearingDegrees
+            let coarseOutgoingBearing = polyline.steedPilotBearing(atDistance: maneuverGeometryDistance + 50) ?? step.polyline.steedPilotLastSegmentBearingDegrees
+            let exitAngleDiagnostic = roundaboutExit == 1
+                ? roundaboutExitAngleDiagnostic(
+                    exit: roundaboutExit,
+                    legPolyline: polyline,
+                    maneuverDistance: targetDistance,
+                    incomingBearing: incomingBearing
+                )
+                : RoundaboutExitAngleDiagnostic(targetAngle: nil, outgoingBearing: nil)
+            let outgoingBearing = exitAngleDiagnostic.outgoingBearing ?? coarseOutgoingBearing
             let sourceManeuver = NavigationDecisionManeuver(instruction: step.instructions)
             let inferredManeuver = inferredManeuver(
                 sourceManeuver,
@@ -108,7 +122,7 @@ enum NavigationRouteBuilder {
             )
             let roundaboutAngles = roundaboutExitAngles(
                 exit: roundaboutExit,
-                targetAngle: nil,
+                targetAngle: exitAngleDiagnostic.targetAngle,
                 incomingBearing: incomingBearing,
                 outgoingBearing: outgoingBearing
             )
@@ -129,9 +143,23 @@ enum NavigationRouteBuilder {
                 skipReason = nil
             }
 
+            var routeSteps: [NavigationRouteStep] = []
+            if let approachStep = roundaboutApproachTurnStep(
+                sourceStep: step,
+                roundaboutExit: roundaboutExit,
+                previousStepWasRoundabout: index > 0 && NavigationRouteBuilder.roundaboutExit(from: mapKitSteps[index - 1].instructions) != nil,
+                stepStartDistance: maneuverStartDistance,
+                roundaboutTargetDistance: targetDistance,
+                incomingBearing: stepStartIncomingBearing,
+                outgoingBearing: stepStartOutgoingBearing
+            ) {
+                routeSteps.append(approachStep)
+            }
+
             let routeStep = NavigationRouteStep(
-                distanceFromLegStart: maneuverStartDistance,
-                distance: step.distance,
+                distanceFromLegStart: roundaboutExit == nil ? maneuverStartDistance : targetDistance,
+                targetDistanceFromLegStart: targetDistance,
+                distance: roundaboutExit == nil ? step.distance : max(maneuverGeometryDistance - targetDistance, 0),
                 rawInstruction: step.instructions,
                 rawNotice: step.notice,
                 sourceManeuver: sourceManeuver,
@@ -148,8 +176,39 @@ enum NavigationRouteBuilder {
             )
 
             distanceFromLegStart += step.distance
-            return routeStep
+            routeSteps.append(routeStep)
+            return routeSteps
         }
+
+        return suppressOverlappingRoundaboutSteps(steps)
+    }
+
+    static func suppressOverlappingRoundaboutSteps(_ steps: [NavigationRouteStep]) -> [NavigationRouteStep] {
+        var suppressed = Set<Int>()
+
+        for index in steps.indices {
+            guard !suppressed.contains(index),
+                  steps[index].deviceManeuver == .roundabout else {
+                continue
+            }
+
+            for otherIndex in steps.index(after: index) ..< steps.endIndex {
+                guard !suppressed.contains(otherIndex),
+                      steps[otherIndex].deviceManeuver == .roundabout,
+                      roundaboutStepsLookDuplicated(steps[index], steps[otherIndex]) else {
+                    continue
+                }
+
+                if shouldPreferDuplicateRoundabout(steps[otherIndex], over: steps[index]) {
+                    suppressed.insert(index)
+                    break
+                } else {
+                    suppressed.insert(otherIndex)
+                }
+            }
+        }
+
+        return steps.indices.compactMap { suppressed.contains($0) ? nil : steps[$0] }
     }
 
     static func roundaboutExit(from instruction: String) -> Int? {
@@ -218,17 +277,11 @@ enum NavigationRouteBuilder {
             return .continueAhead
         }
 
-        if angle < -60 {
+        if abs(angle) > 60 {
             return .turnLeft
         }
-        if angle < -20 {
+        if abs(angle) > 20 {
             return .slightLeft
-        }
-        if angle > 60 {
-            return .turnRight
-        }
-        if angle > 20 {
-            return .slightRight
         }
 
         return .continueAhead
@@ -246,6 +299,7 @@ enum NavigationRouteBuilder {
         .map { diagnostic in
             NavigationRouteStep(
                 distanceFromLegStart: diagnostic.startDistance,
+                targetDistanceFromLegStart: diagnostic.startDistance,
                 distance: diagnostic.endDistance - diagnostic.startDistance,
                 rawInstruction: "Synthetic \(diagnostic.maneuver.debugTitle)",
                 rawNotice: "Generated from route curvature: \(diagnostic.peakBendiness) degrees around \(Int(diagnostic.peakDistance))m",
@@ -399,6 +453,104 @@ enum NavigationRouteBuilder {
         return RoundaboutApproachBearingDiagnostic(bearing: analysis.bearing ?? probes.last?.bearing, deviationOffset: analysis.deviationOffset, routeApproachProbes: probes)
     }
 
+    private static func roundaboutTargetDistance(exit: Int?, stepStartDistance: CLLocationDistance, geometryDistance: CLLocationDistance, approachDeviationOffset: CLLocationDistance?) -> CLLocationDistance {
+        guard exit != nil,
+              let approachDeviationOffset else {
+            return stepStartDistance
+        }
+
+        return max(0, min(geometryDistance, geometryDistance + approachDeviationOffset))
+    }
+
+    private static func roundaboutApproachTurnStep(sourceStep: MKRoute.Step, roundaboutExit: Int?, previousStepWasRoundabout: Bool, stepStartDistance: CLLocationDistance, roundaboutTargetDistance: CLLocationDistance, incomingBearing: Int?, outgoingBearing: Int?) -> NavigationRouteStep? {
+        guard roundaboutExit != nil,
+              !previousStepWasRoundabout,
+              roundaboutTargetDistance - stepStartDistance >= 120 else {
+            return nil
+        }
+
+        let maneuver = roundaboutApproachManeuver(incomingBearing: incomingBearing, outgoingBearing: outgoingBearing)
+        guard maneuver.isMeaningfulDirection,
+              maneuver != .roundabout else {
+            return nil
+        }
+
+        return NavigationRouteStep(
+            distanceFromLegStart: stepStartDistance,
+            targetDistanceFromLegStart: stepStartDistance,
+            distance: max(roundaboutTargetDistance - stepStartDistance, 0),
+            rawInstruction: turnInstructionText(for: maneuver),
+            rawNotice: sourceStep.notice,
+            sourceManeuver: maneuver,
+            deviceManeuver: maneuver,
+            incomingBearing: incomingBearing,
+            outgoingBearing: outgoingBearing,
+            mapKitRoundaboutExit: nil,
+            mapKitRoundaboutExitAngles: [],
+            deviceRoundaboutExit: nil,
+            deviceRoundaboutExitAngles: [],
+            roundaboutApproachDeviationOffset: nil,
+            roundaboutApproachProbes: [],
+            skipReason: nil
+        )
+    }
+
+    private static func roundaboutStepsLookDuplicated(_ first: NavigationRouteStep, _ second: NavigationRouteStep) -> Bool {
+        guard first.deviceRoundaboutExit == second.deviceRoundaboutExit,
+              first.rawInstruction.localizedCaseInsensitiveCompare(second.rawInstruction) == .orderedSame else {
+            return false
+        }
+
+        let targetGap = abs(first.targetDistanceFromLegStart - second.targetDistanceFromLegStart)
+        let firstEnd = first.distanceFromLegStart + first.distance
+        let secondEnd = second.distanceFromLegStart + second.distance
+        let spansOverlap = first.distanceFromLegStart <= secondEnd && second.distanceFromLegStart <= firstEnd
+        return targetGap <= 120 || spansOverlap
+    }
+
+    private static func roundaboutDuplicateScore(_ step: NavigationRouteStep) -> Int {
+        let angleScore = step.deviceRoundaboutExitAngles.last.map { abs($0.angleDegrees) } ?? 0
+        let lengthScore = min(60, Int(step.distance.rounded()))
+        return (angleScore * 2) + lengthScore
+    }
+
+    private static func shouldPreferDuplicateRoundabout(_ candidate: NavigationRouteStep, over current: NavigationRouteStep) -> Bool {
+        if candidate.targetDistanceFromLegStart > current.targetDistanceFromLegStart {
+            return true
+        }
+
+        return roundaboutDuplicateScore(candidate) >= roundaboutDuplicateScore(current)
+    }
+
+    private static func roundaboutApproachManeuver(incomingBearing: Int?, outgoingBearing: Int?) -> NavigationDecisionManeuver {
+        guard let angle = relativeAngle(incomingBearing: incomingBearing, outgoingBearing: outgoingBearing) else {
+            return .continueAhead
+        }
+
+        if abs(angle) > 60 {
+            return .turnLeft
+        }
+        if abs(angle) > 20 {
+            return .slightLeft
+        }
+
+        return .continueAhead
+    }
+
+    private static func turnInstructionText(for maneuver: NavigationDecisionManeuver) -> String {
+        switch maneuver {
+            case .bendLeft: return "Bend left"
+            case .bendRight: return "Bend right"
+            case .turnLeft: return "Turn left"
+            case .slightLeft: return "Slight left"
+            case .turnRight: return "Turn right"
+            case .slightRight: return "Slight right"
+            case .sharpLeft: return "Sharp left"
+            case .sharpRight: return "Sharp right"
+            default: return maneuver.debugTitle
+        }
+    }
+
     private static func roundaboutApproachAnalysis(in probes: [NavigationRoundaboutApproachBearingProbe]) -> (bearing: Int?, deviationOffset: CLLocationDistance?) {
         guard let first = probes.first else {
             return (nil, nil)
@@ -442,7 +594,7 @@ enum NavigationRouteBuilder {
         guard exit != nil,
               let incomingBearing,
               let entry = legPolyline.steedPilotCoordinate(atDistance: maneuverDistance) else {
-            return RoundaboutExitAngleDiagnostic(targetAngle: nil)
+            return RoundaboutExitAngleDiagnostic(targetAngle: nil, outgoingBearing: nil)
         }
 
         let estimatedCenter = entry.steedPilotCoordinate(movedMeters: 18, bearingDegrees: incomingBearing)
@@ -455,11 +607,11 @@ enum NavigationRouteBuilder {
             let exitBearing = estimatedCenter.steedPilotBearingDegrees(to: exitSample)
             let angle = roundaboutDisplayAngle(incomingBearing: incomingBearing, outgoingBearing: exitBearing)
             if sampleDistance >= 18 {
-                return RoundaboutExitAngleDiagnostic(targetAngle: angle)
+                return RoundaboutExitAngleDiagnostic(targetAngle: angle, outgoingBearing: exitBearing)
             }
         }
 
-        return RoundaboutExitAngleDiagnostic(targetAngle: nil)
+        return RoundaboutExitAngleDiagnostic(targetAngle: nil, outgoingBearing: nil)
     }
 
     private static func roundaboutExitAngles(exit: Int?, targetAngle: Int?, incomingBearing: Int?, outgoingBearing: Int?) -> [NavigationRoundaboutExitAngle] {
@@ -517,6 +669,7 @@ private struct RoundaboutApproachBearingDiagnostic {
 
 private struct RoundaboutExitAngleDiagnostic {
     let targetAngle: Int?
+    let outgoingBearing: Int?
 }
 
 private struct SyntheticBendCandidate {
@@ -579,6 +732,23 @@ extension MKPolyline {
         for index in stride(from: coordinates.count - 1, through: 1, by: -1) {
             let start = coordinates[index - 1]
             let end = coordinates[index]
+            if start.latitude != end.latitude || start.longitude != end.longitude {
+                return start.steedPilotBearingDegrees(to: end)
+            }
+        }
+
+        return nil
+    }
+
+    var steedPilotFirstSegmentBearingDegrees: Int? {
+        let coordinates = steedPilotRouteCoordinates
+        guard coordinates.count > 1 else {
+            return nil
+        }
+
+        for index in 0 ..< coordinates.count - 1 {
+            let start = coordinates[index]
+            let end = coordinates[index + 1]
             if start.latitude != end.latitude || start.longitude != end.longitude {
                 return start.steedPilotBearingDegrees(to: end)
             }

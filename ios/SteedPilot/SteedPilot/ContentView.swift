@@ -45,6 +45,7 @@ struct ContentView: View {
     @State private var searchEditorPresented = false
     @State private var navigationDebugLog: [String] = []
     @State private var activeManeuverProgressWindow: ManeuverProgressWindow?
+    @State private var selectedDebugInstructionID: String?
     @State private var routeAuditMessage: String?
     @State private var saveRouteName = ""
     @State private var savedRoutes: [SavedRoute] = []
@@ -203,6 +204,43 @@ struct ContentView: View {
                                 Circle()
                                     .stroke(.black.opacity(0.8), lineWidth: 1.5)
                             )
+                    }
+                }
+
+                ForEach(debugInstructionMarkers) { marker in
+                    Annotation("", coordinate: marker.coordinate) {
+                        Button {
+                            selectedDebugInstructionID = marker.instructionID
+                        } label: {
+                            Text(marker.label)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 28, height: 28)
+                                .background(marker.color, in: Circle())
+                                .overlay(
+                                    Circle()
+                                        .stroke(marker.isSelected ? Color.white : Color.black.opacity(0.75), lineWidth: marker.isSelected ? 2.5 : 1.5)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if let marker = debugNextInstructionMarker {
+                    Annotation("", coordinate: marker.coordinate) {
+                        VStack(spacing: 2) {
+                            Text("NEXT")
+                                .font(.caption2.weight(.heavy))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.yellow, in: Capsule())
+
+                            Image(systemName: "arrowtriangle.down.fill")
+                                .font(.caption)
+                                .foregroundStyle(.yellow)
+                        }
+                        .shadow(color: .black.opacity(0.7), radius: 3, y: 1)
                     }
                 }
 
@@ -697,6 +735,28 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            if let selectedDebugInstructionText {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.yellow)
+
+                    Text(selectedDebugInstructionText)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button {
+                        selectedDebugInstructionID = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                }
+            }
+
             HStack(spacing: 8) {
                 Button(action: resetDebugRideProgress) {
                     Image(systemName: "location")
@@ -740,12 +800,11 @@ struct ContentView: View {
             return "Next: no route"
         }
 
-        let debugDistance = debugRideDistanceMeters ?? 0
-        guard let routeProgress = simulatedRouteProgress(at: debugDistance) else {
+        guard let snapshot = debugNextInstructionSnapshot,
+              let routeProgress = simulatedRouteProgress(at: debugRideDistanceMeters ?? 0) else {
             return "Next: no route progress"
         }
 
-        let snapshot = rideNavigationSnapshot(totalDistance: totalRouteDistance, routeProgress: routeProgress, currentCoordinate: nil)
         guard let instruction = snapshot.selectedInstruction else {
             return "Next: \(snapshot.selectedInstructionText)"
         }
@@ -758,6 +817,41 @@ struct ContentView: View {
         let instructionText = instruction.rawInstruction.isEmpty ? "No instruction text" : instruction.rawInstruction
 
         return "Next: \(maneuver) in \(distance) - \(instructionText)"
+    }
+
+    private var debugNextInstructionMarker: DebugNextInstructionMarker? {
+        guard showRideTestControls,
+              routeActive,
+              !routeLegs.isEmpty,
+              totalRouteDistance > 0,
+              let snapshot = debugNextInstructionSnapshot,
+              let targetOffset = snapshot.selectedInstructionTargetOffsetMeters ?? snapshot.selectedInstructionOffsetMeters,
+              let coordinate = routeCoordinate(at: targetOffset) else {
+            return nil
+        }
+
+        return DebugNextInstructionMarker(coordinate: coordinate)
+    }
+
+    private var debugNextInstructionSnapshot: RideNavigationSnapshot? {
+        let debugDistance = debugRideDistanceMeters ?? 0
+        guard let routeProgress = simulatedRouteProgress(at: debugDistance) else {
+            return nil
+        }
+
+        return rideNavigationSnapshot(totalDistance: totalRouteDistance, routeProgress: routeProgress, currentCoordinate: nil)
+    }
+
+    private var selectedDebugInstructionText: String? {
+        guard let selectedDebugInstruction else {
+            return nil
+        }
+
+        let span = "\(formatDebugInstructionDistance(selectedDebugInstruction.instruction.distanceFromLegStart))-\(formatDebugInstructionDistance(selectedDebugInstruction.instruction.distanceFromLegStart + selectedDebugInstruction.instruction.distance))"
+        let sent = selectedDebugInstruction.instruction.maneuver.debugTitle
+        let raw = selectedDebugInstruction.instruction.rawInstruction.isEmpty ? "(empty instruction)" : selectedDebugInstruction.instruction.rawInstruction
+        let exit = selectedDebugInstruction.instruction.roundaboutExit.map { " exit \($0)" } ?? ""
+        return "Instruction \(selectedDebugInstruction.index + 1): \(sent)\(exit) @ \(span) - \(raw)"
     }
 
     private var debugMapCoordinate: CLLocationCoordinate2D? {
@@ -863,21 +957,31 @@ struct ContentView: View {
 
     private var debugBendinessPoints: [DebugBendinessPoint] {
         guard showRideTestControls,
-              routeActive else {
+              let visibleRegion = debugVisibleRegion,
+              visibleRegion.span.latitudeDelta <= 0.08 else {
             return []
         }
 
         let sampleSpacing: CLLocationDistance = 20
         let curvatureWindow: CLLocationDistance = 20
+        var totalPoints = 0
+        let maximumPoints = 80
         return routeLegs.flatMap { leg in
             var points: [DebugBendinessPoint] = []
             var distance = curvatureWindow
             while distance <= leg.distance - curvatureWindow {
+                defer { distance += sampleSpacing }
+                guard totalPoints < maximumPoints else {
+                    break
+                }
+
                 if let coordinate = leg.polyline.coordinate(atDistance: distance),
+                   coordinate.isInside(visibleRegion),
                    let before = leg.polyline.bearing(atDistance: distance - curvatureWindow),
                    let after = leg.polyline.bearing(atDistance: distance + curvatureWindow) {
                     let deviation = abs(normalizedDebugAngle(after - before))
                     if deviation >= 15 {
+                        totalPoints += 1
                         points.append(
                             DebugBendinessPoint(
                                 coordinate: coordinate,
@@ -887,8 +991,6 @@ struct ContentView: View {
                         )
                     }
                 }
-
-                distance += sampleSpacing
             }
 
             return points
@@ -935,7 +1037,7 @@ struct ContentView: View {
 
     private var debugBendMarkers: [DebugBendMarker] {
         guard showRideTestControls,
-              routeActive else {
+              let visibleRegion = debugVisibleRegion else {
             return []
         }
 
@@ -943,7 +1045,8 @@ struct ContentView: View {
             leg.instructions.flatMap { instruction -> [DebugBendMarker] in
                 guard instruction.maneuver == .bendLeft || instruction.maneuver == .bendRight,
                       let start = leg.polyline.coordinate(atDistance: instruction.distanceFromLegStart),
-                      let end = leg.polyline.coordinate(atDistance: instruction.distanceFromLegStart + instruction.distance) else {
+                      let end = leg.polyline.coordinate(atDistance: instruction.distanceFromLegStart + instruction.distance),
+                      start.isInside(visibleRegion) || end.isInside(visibleRegion) else {
                     return []
                 }
 
@@ -952,6 +1055,104 @@ struct ContentView: View {
                     DebugBendMarker(coordinate: end, text: "B_out", color: .red)
                 ]
             }
+        }
+    }
+
+    private var debugInstructionMarkers: [DebugInstructionMarker] {
+        guard showRideTestControls,
+              let visibleRegion = debugVisibleRegion else {
+            return []
+        }
+
+        var totalMarkers = 0
+        let maximumMarkers = 80
+        return routeLegs.flatMap { leg in
+            leg.instructions.enumerated().flatMap { index, instruction -> [DebugInstructionMarker] in
+                guard totalMarkers < maximumMarkers else {
+                    return []
+                }
+
+                let instructionID = "\(leg.id.uuidString)-\(index)"
+                let isSelected = selectedDebugInstructionID == instructionID
+                let startDistance = instruction.distanceFromLegStart
+                let endDistance = instruction.distanceFromLegStart + instruction.distance
+                let color = debugInstructionColor(for: instruction.maneuver, isEnd: false)
+                var markers: [DebugInstructionMarker] = []
+
+                if let start = leg.polyline.coordinate(atDistance: startDistance),
+                   start.isInside(visibleRegion) {
+                    totalMarkers += 1
+                    markers.append(DebugInstructionMarker(
+                        instructionID: instructionID,
+                        coordinate: start,
+                        label: "S\(index + 1)",
+                        color: color,
+                        isSelected: isSelected
+                    ))
+                }
+
+                if totalMarkers < maximumMarkers,
+                   instruction.distance > 1,
+                   let end = leg.polyline.coordinate(atDistance: endDistance) {
+                    guard end.isInside(visibleRegion) else {
+                        return markers
+                    }
+
+                    totalMarkers += 1
+                    markers.append(DebugInstructionMarker(
+                        instructionID: instructionID,
+                        coordinate: end,
+                        label: "E\(index + 1)",
+                        color: debugInstructionColor(for: instruction.maneuver, isEnd: true),
+                        isSelected: isSelected
+                    ))
+                }
+
+                return markers
+            }
+        }
+    }
+
+    private var debugVisibleRegion: MKCoordinateRegion? {
+        guard let region = cameraPosition.region else {
+            return nil
+        }
+
+        return MKCoordinateRegion(
+            center: region.center,
+            span: MKCoordinateSpan(
+                latitudeDelta: max(region.span.latitudeDelta * 1.15, 0.01),
+                longitudeDelta: max(region.span.longitudeDelta * 1.15, 0.01)
+            )
+        )
+    }
+
+    private var selectedDebugInstruction: (index: Int, instruction: RouteInstruction)? {
+        guard let selectedDebugInstructionID else {
+            return nil
+        }
+
+        for leg in routeLegs {
+            for (index, instruction) in leg.instructions.enumerated() {
+                if selectedDebugInstructionID == "\(leg.id.uuidString)-\(index)" {
+                    return (index, instruction)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func debugInstructionColor(for maneuver: DeviceManeuver, isEnd: Bool) -> Color {
+        switch maneuver {
+            case .roundabout:
+                return isEnd ? .indigo : .purple
+            case .bendLeft, .bendRight:
+                return isEnd ? .yellow : .orange
+            case .arrive:
+                return .green
+            default:
+                return isEnd ? .cyan : .blue
         }
     }
 
@@ -2129,6 +2330,7 @@ struct ContentView: View {
                         legID: leg.id,
                         index: index,
                         distanceFromLegStart: instruction.distanceFromLegStart,
+                        targetDistanceFromLegStart: instruction.targetDistanceFromLegStart,
                         distance: instruction.distance,
                         rawInstruction: instruction.rawInstruction,
                         maneuver: NavigationDecisionManeuver(instruction.maneuver),
@@ -3645,6 +3847,19 @@ private struct DebugBendMarker: Identifiable {
     let color: Color
 }
 
+private struct DebugInstructionMarker: Identifiable {
+    let id = UUID()
+    let instructionID: String
+    let coordinate: CLLocationCoordinate2D
+    let label: String
+    let color: Color
+    let isSelected: Bool
+}
+
+private struct DebugNextInstructionMarker {
+    let coordinate: CLLocationCoordinate2D
+}
+
 private struct PolylineProgress {
     let distanceToRoute: CLLocationDistance
     let distanceFromStart: CLLocationDistance
@@ -3660,6 +3875,7 @@ private struct PolylineRouteSample {
 
 private struct RouteDebugStep {
     let distanceFromLegStart: CLLocationDistance
+    let targetDistanceFromLegStart: CLLocationDistance
     let distance: CLLocationDistance
     let rawInstruction: String
     let rawNotice: String?
@@ -3675,8 +3891,9 @@ private struct RouteDebugStep {
     let roundaboutApproachProbes: [RoundaboutApproachBearingProbe]
     let skipReason: String?
 
-    init(distanceFromLegStart: CLLocationDistance, distance: CLLocationDistance, rawInstruction: String, rawNotice: String?, sourceManeuver: DeviceManeuver, deviceManeuver: DeviceManeuver?, incomingBearing: Int?, outgoingBearing: Int?, mapKitRoundaboutExit: Int?, mapKitRoundaboutExitAngles: [RoundaboutExitAngle], deviceRoundaboutExit: Int?, deviceRoundaboutExitAngles: [RoundaboutExitAngle], roundaboutApproachDeviationOffset: CLLocationDistance?, roundaboutApproachProbes: [RoundaboutApproachBearingProbe], skipReason: String?) {
+    init(distanceFromLegStart: CLLocationDistance, targetDistanceFromLegStart: CLLocationDistance, distance: CLLocationDistance, rawInstruction: String, rawNotice: String?, sourceManeuver: DeviceManeuver, deviceManeuver: DeviceManeuver?, incomingBearing: Int?, outgoingBearing: Int?, mapKitRoundaboutExit: Int?, mapKitRoundaboutExitAngles: [RoundaboutExitAngle], deviceRoundaboutExit: Int?, deviceRoundaboutExitAngles: [RoundaboutExitAngle], roundaboutApproachDeviationOffset: CLLocationDistance?, roundaboutApproachProbes: [RoundaboutApproachBearingProbe], skipReason: String?) {
         self.distanceFromLegStart = distanceFromLegStart
+        self.targetDistanceFromLegStart = targetDistanceFromLegStart
         self.distance = distance
         self.rawInstruction = rawInstruction
         self.rawNotice = rawNotice
@@ -3695,6 +3912,7 @@ private struct RouteDebugStep {
 
     init(_ step: NavigationRouteStep) {
         self.distanceFromLegStart = step.distanceFromLegStart
+        self.targetDistanceFromLegStart = step.targetDistanceFromLegStart
         self.distance = step.distance
         self.rawInstruction = step.rawInstruction
         self.rawNotice = step.rawNotice
@@ -3714,6 +3932,7 @@ private struct RouteDebugStep {
 
 private struct RouteInstruction {
     let distanceFromLegStart: CLLocationDistance
+    let targetDistanceFromLegStart: CLLocationDistance
     let distance: CLLocationDistance
     let rawInstruction: String
     let rawNotice: String?
@@ -3728,10 +3947,6 @@ private struct RouteInstruction {
     let roundaboutApproachDeviationOffset: CLLocationDistance?
     let roundaboutApproachProbes: [RoundaboutApproachBearingProbe]
 
-    var targetDistanceFromLegStart: CLLocationDistance {
-        distanceFromLegStart
-    }
-
     init?(_ debugStep: RouteDebugStep) {
         guard let maneuver = debugStep.deviceManeuver,
               debugStep.skipReason == nil else {
@@ -3739,6 +3954,7 @@ private struct RouteInstruction {
         }
 
         self.distanceFromLegStart = debugStep.distanceFromLegStart
+        self.targetDistanceFromLegStart = debugStep.targetDistanceFromLegStart
         self.distance = debugStep.distance
         self.rawInstruction = debugStep.rawInstruction
         self.rawNotice = debugStep.rawNotice
@@ -3910,6 +4126,11 @@ private enum WaypointKind {
 private extension CLLocationCoordinate2D {
     func isVisuallySame(as other: CLLocationCoordinate2D) -> Bool {
         abs(latitude - other.latitude) < 0.00001 && abs(longitude - other.longitude) < 0.00001
+    }
+
+    func isInside(_ region: MKCoordinateRegion) -> Bool {
+        abs(latitude - region.center.latitude) <= region.span.latitudeDelta / 2
+            && abs(longitude - region.center.longitude) <= region.span.longitudeDelta / 2
     }
 
     func bearingDegrees(to destination: CLLocationCoordinate2D) -> Int {

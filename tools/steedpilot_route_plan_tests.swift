@@ -22,9 +22,31 @@ private struct DeviceStage {
 
 private struct PlannedRouteTest {
     let name: String
-    let start: String
-    let destination: String
+    let start: RoutePlanEndpoint
+    let destination: RoutePlanEndpoint
+    let avoidMotorways: Bool
     let expectedStages: [ExpectedStage]
+
+    init(name: String, start: String, destination: String, expectedStages: [ExpectedStage]) {
+        self.name = name
+        self.start = .query(start)
+        self.destination = .query(destination)
+        self.avoidMotorways = false
+        self.expectedStages = expectedStages
+    }
+
+    init(name: String, startCoordinate: CLLocationCoordinate2D, destinationCoordinate: CLLocationCoordinate2D, avoidMotorways: Bool = false, expectedStages: [ExpectedStage]) {
+        self.name = name
+        self.start = .coordinate(startCoordinate)
+        self.destination = .coordinate(destinationCoordinate)
+        self.avoidMotorways = avoidMotorways
+        self.expectedStages = expectedStages
+    }
+}
+
+private enum RoutePlanEndpoint {
+    case query(String)
+    case coordinate(CLLocationCoordinate2D)
 }
 
 private struct PlannedRouteResult {
@@ -50,6 +72,8 @@ private enum RoutePlanFailure: Error, CustomStringConvertible {
     case routeFailed(String)
     case stageCount(name: String, expected: Int, actual: Int)
     case stageMismatch(name: String, index: Int, expected: ExpectedStage, actual: DeviceStage)
+    case staleRoundaboutText(name: String, index: Int, actual: DeviceStage)
+    case failed(String)
 
     var description: String {
         switch self {
@@ -61,6 +85,10 @@ private enum RoutePlanFailure: Error, CustomStringConvertible {
                 return "\(name): expected \(expected) stages, got \(actual)"
             case let .stageMismatch(name, index, expected, actual):
                 return "\(name) stage \(index + 1): expected \(expected.maneuver.rawValue) containing '\(expected.textContains)', got \(actual.maneuver.rawValue) '\(actual.text)'"
+            case let .staleRoundaboutText(name, index, actual):
+                return "\(name) stage \(index + 1): non-roundabout instruction still contains roundabout text: '\(actual.mapKitInstruction)'"
+            case let .failed(message):
+                return message
         }
     }
 }
@@ -83,6 +111,7 @@ private struct RoutePlanTests {
             destination: "PE19 6TW, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
+                ExpectedStage(.turnLeft, textContains: "Left"),
                 ExpectedStage(.roundabout, textContains: "exit 1", angleRange: -125 ... -95),
                 ExpectedStage(.roundabout, textContains: "exit 2", angleRange: 80 ... 115),
                 ExpectedStage(.arrive, textContains: "Arrive")
@@ -94,6 +123,7 @@ private struct RoutePlanTests {
             destination: "Franks Farm, CB23 4EY, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
+                ExpectedStage(.turnLeft, textContains: "Left"),
                 ExpectedStage(.roundabout, textContains: "exit 3", angleRange: 80 ... 115),
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.turnRight, textContains: "Right"),
@@ -103,17 +133,47 @@ private struct RoutePlanTests {
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.arrive, textContains: "Arrive")
             ]
+        ),
+        PlannedRouteTest(
+            name: "Regression route A",
+            startCoordinate: CLLocationCoordinate2D(latitude: 52.2503681, longitude: -0.1147143),
+            destinationCoordinate: CLLocationCoordinate2D(latitude: 52.2211188, longitude: -0.0723177),
+            avoidMotorways: true,
+            expectedStages: [
+                ExpectedStage(.bendLeft, textContains: "Bend left"),
+                ExpectedStage(.turnLeft, textContains: "Left"),
+                ExpectedStage(.roundabout, textContains: "exit 1"),
+                ExpectedStage(.roundabout, textContains: "exit 2"),
+                ExpectedStage(.roundabout, textContains: "exit 1"),
+                ExpectedStage(.roundabout, textContains: "exit 2"),
+                ExpectedStage(.roundabout, textContains: "exit 1"),
+                ExpectedStage(.turnLeft, textContains: "Left"),
+                ExpectedStage(.bendRight, textContains: "Bend right"),
+                ExpectedStage(.turnLeft, textContains: "Left"),
+                ExpectedStage(.roundabout, textContains: "exit 1", angleRange: -100 ... -60),
+                ExpectedStage(.arrive, textContains: "Arrive")
+            ]
         )
     ]
 
     static func main() async {
         var failures: [String] = []
 
+        do {
+            try validateOverlappingRoundaboutSuppression()
+            print("PASS overlapping roundabout suppression")
+        } catch {
+            failures.append(String(describing: error))
+            print("FAIL overlapping roundabout suppression: \(error)")
+        }
+        print("")
+
         for test in tests {
             do {
                 let result = try await routeResult(for: test)
                 let sentStages = stagesSentByDevicePipeline(for: result)
                 printStages(result.stages, sentStages: sentStages, bendDiagnostics: result.bendDiagnostics, for: test)
+                try validateNoStaleRoundaboutText(stages: result.stages, name: test.name)
                 try validate(stages: sentStages, for: test)
                 print("PASS \(test.name)")
             } catch {
@@ -132,16 +192,15 @@ private struct RoutePlanTests {
     }
 
     private static func routeResult(for test: PlannedRouteTest) async throws -> PlannedRouteResult {
-        let startPlacemark = try await geocode(test.start)
-        let destinationPlacemark = try await geocode(test.destination)
         let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(placemark: startPlacemark))
-        request.destination = MKMapItem(placemark: MKPlacemark(placemark: destinationPlacemark))
+        request.source = try await mapItem(for: test.start)
+        request.destination = try await mapItem(for: test.destination)
         request.transportType = .automobile
-        request.requestsAlternateRoutes = false
+        request.requestsAlternateRoutes = test.avoidMotorways
+        request.highwayPreference = test.avoidMotorways ? .avoid : .any
 
         let routes = try await MKDirections(request: request).calculate().routes
-        guard let route = routes.first else {
+        guard let route = test.avoidMotorways ? routes.first(where: { !$0.hasHighways }) ?? routes.first : routes.first else {
             throw RoutePlanFailure.routeFailed(test.name)
         }
 
@@ -176,6 +235,7 @@ private struct RoutePlanTests {
                     legID: legID,
                     index: index,
                     distanceFromLegStart: target,
+                    targetDistanceFromLegStart: target,
                     distance: 0,
                     rawInstruction: stage.mapKitInstruction,
                     maneuver: stage.maneuver,
@@ -235,6 +295,16 @@ private struct RoutePlanTests {
         return sentStages
     }
 
+    private static func mapItem(for endpoint: RoutePlanEndpoint) async throws -> MKMapItem {
+        switch endpoint {
+            case let .query(query):
+                let placemark = try await geocode(query)
+                return MKMapItem(placemark: MKPlacemark(placemark: placemark))
+            case let .coordinate(coordinate):
+                return MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
+        }
+    }
+
     private static func geocode(_ query: String) async throws -> CLPlacemark {
         let placemarks = try await CLGeocoder().geocodeAddressString(query)
         guard let placemark = placemarks.first else {
@@ -262,6 +332,57 @@ private struct RoutePlanTests {
                     throw RoutePlanFailure.stageMismatch(name: test.name, index: index, expected: expected, actual: actual)
                 }
             }
+
+            if actual.maneuver != .roundabout,
+               actual.mapKitInstruction.localizedCaseInsensitiveContains("roundabout") {
+                throw RoutePlanFailure.staleRoundaboutText(name: test.name, index: index, actual: actual)
+            }
+        }
+    }
+
+    private static func validateNoStaleRoundaboutText(stages: [DeviceStage], name: String) throws {
+        for (index, stage) in stages.enumerated() {
+            if stage.maneuver != .roundabout,
+               stage.mapKitInstruction.localizedCaseInsensitiveContains("roundabout") {
+                throw RoutePlanFailure.staleRoundaboutText(name: name, index: index, actual: stage)
+            }
+        }
+    }
+
+    private static func validateOverlappingRoundaboutSuppression() throws {
+        let weakDuplicate = makeRoundaboutStep(start: 7033, distance: 140, angle: -38)
+        let realRoundabout = makeRoundaboutStep(start: 7113, distance: 180, angle: 150)
+        let kept = NavigationRouteBuilder.suppressOverlappingRoundaboutSteps([weakDuplicate, realRoundabout])
+
+        try assertEqual(kept.count, 1, "Overlapping duplicate roundabouts should collapse to one instruction")
+        try assertEqual(Int(kept[0].distanceFromLegStart.rounded()), 7113, "The later overlapping roundabout should be kept")
+        try assertEqual(kept[0].deviceRoundaboutExitAngles.last?.angleDegrees, 150, "The kept roundabout should preserve its exit angle")
+    }
+
+    private static func makeRoundaboutStep(start: CLLocationDistance, distance: CLLocationDistance, angle: Int) -> NavigationRouteStep {
+        NavigationRouteStep(
+            distanceFromLegStart: start,
+            targetDistanceFromLegStart: start,
+            distance: distance,
+            rawInstruction: "At the roundabout, take the first exit",
+            rawNotice: nil,
+            sourceManeuver: .roundabout,
+            deviceManeuver: .roundabout,
+            incomingBearing: nil,
+            outgoingBearing: nil,
+            mapKitRoundaboutExit: 1,
+            mapKitRoundaboutExitAngles: [NavigationRoundaboutExitAngle(index: 1, angleDegrees: angle)],
+            deviceRoundaboutExit: 1,
+            deviceRoundaboutExitAngles: [NavigationRoundaboutExitAngle(index: 1, angleDegrees: angle)],
+            roundaboutApproachDeviationOffset: nil,
+            roundaboutApproachProbes: [],
+            skipReason: nil
+        )
+    }
+
+    private static func assertEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String) throws {
+        guard actual == expected else {
+            throw RoutePlanFailure.failed("\(message). Expected \(expected), got \(actual).")
         }
     }
 
@@ -311,12 +432,6 @@ private extension DeviceStage {
         }
 
         return maneuver.deviceText
-    }
-}
-
-private extension NavigationRouteStep {
-    var targetDistanceFromLegStart: CLLocationDistance {
-        distanceFromLegStart
     }
 }
 
