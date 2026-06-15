@@ -2855,6 +2855,7 @@ struct ContentView: View {
         savedRoutes.insert(savedRoute, at: 0)
         persistSavedRoutes()
         saveRouteName = ""
+        showingSaveRouteDialog = false
     }
 
     private func restoreSavedRoute(_ route: SavedRoute) {
