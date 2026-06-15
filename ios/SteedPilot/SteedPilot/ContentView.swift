@@ -103,7 +103,7 @@ struct ContentView: View {
                 centerMap(on: coordinate, span: SampleRoute.localSpan)
                 pendingLocationRecenter = false
             }
-            .onChange(of: waypoints.map(\.id)) { _, _ in
+            .onChange(of: routeWaypointSignature) { _, _ in
                 recalculateRoute()
             }
             .onChange(of: avoidMotorways) { _, _ in
@@ -594,14 +594,21 @@ struct ContentView: View {
 
                 HStack {
                     Button(action: showSaveRouteDialog) {
-                        Label("Save route", systemImage: "square.and.arrow.down")
+                        Label("Save", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(waypoints.count < 2 || isCalculatingRoute)
+
+                    Spacer()
+
+                    Button(action: reverseRoute) {
+                        Label("Reverse", systemImage: "arrow.up.arrow.down")
                     }
                     .disabled(waypoints.count < 2 || isCalculatingRoute)
 
                     Spacer()
 
                     Button(role: .destructive, action: clearPlannedRoute) {
-                        Label("Clear route", systemImage: "trash")
+                        Label("Clear", systemImage: "trash")
                     }
                 }
                 .font(.caption.weight(.semibold))
@@ -1310,6 +1317,12 @@ struct ContentView: View {
 
     private var canStartRide: Bool {
         waypoints.count > 1 && !routeActive
+    }
+
+    private var routeWaypointSignature: String {
+        waypoints.map {
+            "\($0.id.uuidString)|\($0.coordinate.latitude)|\($0.coordinate.longitude)"
+        }.joined(separator: ">")
     }
 
     private var routeDistanceText: String {
