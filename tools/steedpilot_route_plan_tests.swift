@@ -111,7 +111,7 @@ private struct RoutePlanTests {
             destination: "PE19 6TW, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.turnLeft, textContains: "Left"),
+                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.roundabout, textContains: "exit 1", angleRange: -125 ... -95),
                 ExpectedStage(.roundabout, textContains: "exit 2", angleRange: 80 ... 115),
                 ExpectedStage(.arrive, textContains: "Arrive")
@@ -123,7 +123,7 @@ private struct RoutePlanTests {
             destination: "Franks Farm, CB23 4EY, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.turnLeft, textContains: "Left"),
+                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.roundabout, textContains: "exit 3", angleRange: 80 ... 115),
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.turnRight, textContains: "Right"),
@@ -165,6 +165,14 @@ private struct RoutePlanTests {
         } catch {
             failures.append(String(describing: error))
             print("FAIL overlapping roundabout suppression: \(error)")
+        }
+
+        do {
+            try validateSignedTurnManeuvers()
+            print("PASS signed turn maneuvers")
+        } catch {
+            failures.append(String(describing: error))
+            print("FAIL signed turn maneuvers: \(error)")
         }
         print("")
 
@@ -357,6 +365,14 @@ private struct RoutePlanTests {
         try assertEqual(kept.count, 1, "Overlapping duplicate roundabouts should collapse to one instruction")
         try assertEqual(Int(kept[0].distanceFromLegStart.rounded()), 7113, "The later overlapping roundabout should be kept")
         try assertEqual(kept[0].deviceRoundaboutExitAngles.last?.angleDegrees, 150, "The kept roundabout should preserve its exit angle")
+    }
+
+    private static func validateSignedTurnManeuvers() throws {
+        try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: -75), .turnLeft, "Strong negative angles should map to left turns")
+        try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: -35), .slightLeft, "Moderate negative angles should map to slight left")
+        try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: 35), .slightRight, "Moderate positive angles should map to slight right")
+        try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: 75), .turnRight, "Strong positive angles should map to right turns")
+        try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: 12), .continueAhead, "Small angle changes should remain continue")
     }
 
     private static func makeRoundaboutStep(start: CLLocationDistance, distance: CLLocationDistance, angle: Int) -> NavigationRouteStep {

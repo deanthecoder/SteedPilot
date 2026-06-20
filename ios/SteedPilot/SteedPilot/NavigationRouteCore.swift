@@ -277,14 +277,7 @@ enum NavigationRouteBuilder {
             return .continueAhead
         }
 
-        if abs(angle) > 60 {
-            return .turnLeft
-        }
-        if abs(angle) > 20 {
-            return .slightLeft
-        }
-
-        return .continueAhead
+        return signedTurnManeuver(forAngle: angle)
     }
 
     private static func syntheticBendSteps(legPolyline: MKPolyline, legDistance: CLLocationDistance, existingSteps: [NavigationRouteStep], suppressStartBoundary: Bool, suppressEndBoundary: Bool) -> [NavigationRouteStep] {
@@ -527,11 +520,21 @@ enum NavigationRouteBuilder {
             return .continueAhead
         }
 
-        if abs(angle) > 60 {
+        return signedTurnManeuver(forAngle: angle)
+    }
+
+    static func signedTurnManeuver(forAngle angle: Int) -> NavigationDecisionManeuver {
+        if angle < -60 {
             return .turnLeft
         }
-        if abs(angle) > 20 {
+        if angle < -20 {
             return .slightLeft
+        }
+        if angle > 60 {
+            return .turnRight
+        }
+        if angle > 20 {
+            return .slightRight
         }
 
         return .continueAhead
