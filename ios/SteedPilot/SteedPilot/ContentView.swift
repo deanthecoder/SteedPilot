@@ -97,12 +97,12 @@ struct ContentView: View {
             .ignoresSafeArea(edges: .bottom)
             .background(Color.black)
             .onReceive(locationProvider.$currentCoordinate.compactMap { $0 }) { coordinate in
-                guard pendingLocationRecenter else {
-                    return
+                if pendingLocationRecenter {
+                    centerMap(on: coordinate, span: SampleRoute.localSpan)
+                    pendingLocationRecenter = false
                 }
 
-                centerMap(on: coordinate, span: SampleRoute.localSpan)
-                pendingLocationRecenter = false
+                sendRideStateFromCurrentLocation()
             }
             .onChange(of: routeWaypointSignature) { _, _ in
                 recalculateRoute()
@@ -1709,6 +1709,14 @@ struct ContentView: View {
         }
 
         locationProvider.requestCurrentLocation()
+        sendRideStateFromCurrentLocation()
+    }
+
+    private func sendRideStateFromCurrentLocation() {
+        guard routeActive else {
+            return
+        }
+
         guard let payload = rideStartPayload() else {
             return
         }
@@ -4498,6 +4506,8 @@ private final class LocationProvider: NSObject, ObservableObject, CLLocationMana
         if shouldTrackRide {
             if manager.authorizationStatus == .authorizedAlways {
                 configureBackgroundLocationIfAvailable()
+            } else if manager.authorizationStatus == .authorizedWhenInUse {
+                manager.requestAlwaysAuthorization()
             }
             manager.startUpdatingLocation()
         } else {

@@ -44,6 +44,7 @@ final class BluetoothNavSender: NSObject, ObservableObject {
     private var writeTimeoutTimer: Timer?
     private var replayWorkItems: [DispatchWorkItem] = []
     private var isConnecting = false
+    private var latestStatePayload: Data?
 
     override init() {
         super.init()
@@ -56,6 +57,8 @@ final class BluetoothNavSender: NSObject, ObservableObject {
      * - Parameter payload: JSON payload bytes.
      */
     func send(_ payload: Data) {
+        latestStatePayload = payload
+
         if isReplaying {
             pendingPayloads.append(payload)
         } else {
@@ -89,6 +92,17 @@ final class BluetoothNavSender: NSObject, ObservableObject {
 
         pendingPayloads.append(NavFixtures.heartbeat)
         sendNextPayload(to: characteristic)
+    }
+
+    /**
+     * Ensures a newly available connection receives the latest desired screen state.
+     */
+    private func queueLatestStatePayloadIfIdle() {
+        guard pendingPayloads.isEmpty, let latestStatePayload else {
+            return
+        }
+
+        pendingPayloads.append(latestStatePayload)
     }
 
     /**
@@ -362,6 +376,7 @@ extension BluetoothNavSender: CBPeripheralDelegate {
 
         isConnected = true
         startHeartbeatTimer()
+        queueLatestStatePayloadIfIdle()
         if !pendingPayloads.isEmpty {
             sendNextPayload(to: characteristic)
         } else {
@@ -374,6 +389,9 @@ extension BluetoothNavSender: CBPeripheralDelegate {
             status = "Write failed"
             isConnected = peripheral.state == .connected
             clearWriteState(requeueCurrentPayload: true)
+            self.characteristic = nil
+            stopHeartbeatTimer()
+            central?.cancelPeripheralConnection(peripheral)
             return
         }
 

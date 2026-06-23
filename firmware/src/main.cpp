@@ -569,6 +569,12 @@ void loop() {
     if (pendingBleState) {
         pendingBleState = false;
         if (nextBlePacket.type == SteedPilot::NavPacketType::Heartbeat) {
+            if (haveBleState && noPhoneVisible) {
+                app.setState(lastBleState);
+                app.render(display);
+                noPhoneVisible = false;
+                Serial.println("BLE heartbeat restored last route state");
+            }
             Serial.println("BLE heartbeat received");
         } else if (nextBlePacket.type == SteedPilot::NavPacketType::State) {
             haveBleState = true;
