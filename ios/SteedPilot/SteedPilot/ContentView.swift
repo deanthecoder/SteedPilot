@@ -59,6 +59,7 @@ struct ContentView: View {
     @AppStorage("SteedPilot.speedWarningLimitMph") private var speedWarningLimitMph = 65
     @AppStorage("SteedPilot.showRideTestControls") private var showRideTestControls = false
     @FocusState private var searchFocused: Bool
+    @FocusState private var homeSearchFocused: Bool
 
     private let fixtures = NavFixtures.loadFixtures()
     private let navigationDebugLogFileName = "SteedPilotNavigation.log"
@@ -1309,8 +1310,13 @@ struct ContentView: View {
                 Section("Home") {
                     HStack {
                         TextField(homeLocation?.name ?? "Search home location", text: $homeSearchText)
+                            .focused($homeSearchFocused)
                             .textInputAutocapitalization(.words)
                             .disableAutocorrection(true)
+                            .submitLabel(.done)
+                            .onSubmit {
+                                setHomeFromSearch()
+                            }
 
                         Button {
                             setHomeFromSearch()
@@ -2998,6 +3004,7 @@ struct ContentView: View {
             return
         }
 
+        homeSearchFocused = false
         isSearchingHome = true
         homeMessage = nil
 
@@ -3012,6 +3019,7 @@ struct ContentView: View {
                 let response = try await MKLocalSearch(request: request).start()
                 guard let mapItem = response.mapItems.first else {
                     await MainActor.run {
+                        homeSearchFocused = false
                         isSearchingHome = false
                         homeMessage = "No places found for \"\(query)\"."
                     }
@@ -3024,6 +3032,7 @@ struct ContentView: View {
                     longitude: mapItem.placemark.coordinate.longitude
                 )
                 await MainActor.run {
+                    homeSearchFocused = false
                     saveHomeLocation(point)
                     homeSearchText = ""
                     homeMessage = nil
@@ -3031,6 +3040,7 @@ struct ContentView: View {
                 }
             } catch {
                 await MainActor.run {
+                    homeSearchFocused = false
                     isSearchingHome = false
                     homeMessage = "Home search failed. Try a more specific place name."
                 }
