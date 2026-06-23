@@ -38,7 +38,6 @@ struct ContentView: View {
     @State private var routeLegs: [RouteLeg] = []
     @State private var isCalculatingRoute = false
     @State private var routeCalculationTask: Task<Void, Never>?
-    @State private var showingSaveRouteDialog = false
     @State private var showingRouteLibrary = false
     @State private var showingSettings = false
     @State private var showingMapKitDebug = false
@@ -384,9 +383,6 @@ struct ContentView: View {
         .sheet(isPresented: $showingRouteLibrary) {
             routeLibrarySheet
         }
-        .sheet(isPresented: $showingSaveRouteDialog) {
-            saveRouteSheet
-        }
         .sheet(isPresented: $showingSettings) {
             settingsSheet
         }
@@ -632,13 +628,6 @@ struct ContentView: View {
                     .overlay(Color.white.opacity(0.10))
 
                 HStack {
-                    Button(action: showSaveRouteDialog) {
-                        Label("Save", systemImage: "square.and.arrow.down")
-                    }
-                    .disabled(waypoints.count < 2 || isCalculatingRoute)
-
-                    Spacer()
-
                     Button(action: reverseRoute) {
                         Label("Reverse", systemImage: "arrow.up.arrow.down")
                     }
@@ -1221,6 +1210,20 @@ struct ContentView: View {
     private var routeLibrarySheet: some View {
         NavigationStack {
             List {
+                if canSavePlannedRoute {
+                    Section("Current Route") {
+                        TextField("Route name", text: $saveRouteName)
+                            .textInputAutocapitalization(.words)
+                            .disableAutocorrection(true)
+
+                        Button(action: savePlannedRoute) {
+                            Label("Save current route", systemImage: "square.and.arrow.down")
+                        }
+                        .disabled(saveRouteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCalculatingRoute)
+                    }
+                    .listRowBackground(Color.white.opacity(0.04))
+                }
+
                 if savedRoutes.isEmpty {
                     ContentUnavailableView(
                         "No Saved Routes",
@@ -1398,45 +1401,6 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
     }
 
-    private var saveRouteSheet: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Name this route so it can be found in your library later.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                SelectAllTextField(text: $saveRouteName, placeholder: "Route name")
-                    .frame(height: 44)
-                    .padding(.horizontal, 10)
-                    .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                    )
-
-                Spacer(minLength: 0)
-            }
-            .padding(18)
-            .navigationTitle("Save route")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        showingSaveRouteDialog = false
-                    }
-                }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save", action: savePlannedRoute)
-                        .disabled(saveRouteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-            .background(Color(red: 0.045, green: 0.050, blue: 0.060))
-        }
-        .presentationDetents([.height(190)])
-        .preferredColorScheme(.dark)
-    }
-
     private var distanceUnitPreferenceBinding: Binding<DistanceUnitPreference> {
         Binding {
             distanceUnitPreference
@@ -1524,6 +1488,10 @@ struct ContentView: View {
 
     private var canStartRide: Bool {
         waypoints.count > 1 && !routeActive
+    }
+
+    private var canSavePlannedRoute: Bool {
+        waypoints.count > 1
     }
 
     private var routeWaypointSignature: String {
@@ -2980,17 +2948,11 @@ struct ContentView: View {
         sender.send(NavFixtures.clearRoute)
     }
 
-    private func showSaveRouteDialog() {
-        guard waypoints.count > 1 else {
-            return
-        }
-
-        saveRouteName = defaultRouteSaveName
-        showingSaveRouteDialog = true
-    }
-
     private func showRouteLibrary() {
         loadSavedRoutes()
+        if canSavePlannedRoute && saveRouteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            saveRouteName = defaultRouteSaveName
+        }
         showingRouteLibrary = true
     }
 
@@ -3088,7 +3050,6 @@ struct ContentView: View {
         savedRoutes.insert(savedRoute, at: 0)
         persistSavedRoutes()
         saveRouteName = ""
-        showingSaveRouteDialog = false
     }
 
     private func restoreSavedRoute(_ route: SavedRoute) {
@@ -3187,58 +3148,6 @@ private struct RouteStat: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
-    }
-}
-
-private struct SelectAllTextField: UIViewRepresentable {
-    @Binding var text: String
-    let placeholder: String
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
-    }
-
-    func makeUIView(context: Context) -> UITextField {
-        let textField = UITextField()
-        textField.placeholder = placeholder
-        textField.text = text
-        textField.textColor = .white
-        textField.tintColor = .systemCyan
-        textField.returnKeyType = .done
-        textField.autocapitalizationType = .words
-        textField.autocorrectionType = .no
-        textField.delegate = context.coordinator
-        textField.addTarget(context.coordinator, action: #selector(Coordinator.textChanged(_:)), for: .editingChanged)
-
-        DispatchQueue.main.async {
-            textField.becomeFirstResponder()
-            textField.selectAll(nil)
-        }
-
-        return textField
-    }
-
-    func updateUIView(_ textField: UITextField, context: Context) {
-        if textField.text != text {
-            textField.text = text
-        }
-    }
-
-    final class Coordinator: NSObject, UITextFieldDelegate {
-        @Binding private var text: String
-
-        init(text: Binding<String>) {
-            _text = text
-        }
-
-        @objc func textChanged(_ textField: UITextField) {
-            text = textField.text ?? ""
-        }
-
-        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-            textField.resignFirstResponder()
-            return true
-        }
     }
 }
 
