@@ -1219,7 +1219,7 @@ struct ContentView: View {
                         Button(action: savePlannedRoute) {
                             Label("Save current route", systemImage: "square.and.arrow.down")
                         }
-                        .disabled(saveRouteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCalculatingRoute)
+                        .disabled(!canSaveCurrentRoute)
                     }
                     .listRowBackground(Color.white.opacity(0.04))
                 }
@@ -1492,6 +1492,14 @@ struct ContentView: View {
 
     private var canSavePlannedRoute: Bool {
         waypoints.count > 1
+    }
+
+    private var trimmedRouteSaveName: String {
+        saveRouteName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSaveCurrentRoute: Bool {
+        canSavePlannedRoute && !trimmedRouteSaveName.isEmpty && !isCalculatingRoute
     }
 
     private var routeWaypointSignature: String {
@@ -2960,6 +2968,10 @@ struct ContentView: View {
         showingSettings = true
     }
 
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
     private func setHomeFromSearch() {
         let query = homeSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, !isSearchingHome else {
@@ -2967,6 +2979,7 @@ struct ContentView: View {
         }
 
         homeSearchFocused = false
+        dismissKeyboard()
         isSearchingHome = true
         homeMessage = nil
 
@@ -2982,6 +2995,7 @@ struct ContentView: View {
                 guard let mapItem = response.mapItems.first else {
                     await MainActor.run {
                         homeSearchFocused = false
+                        dismissKeyboard()
                         isSearchingHome = false
                         homeMessage = "No places found for \"\(query)\"."
                     }
@@ -2995,6 +3009,7 @@ struct ContentView: View {
                 )
                 await MainActor.run {
                     homeSearchFocused = false
+                    dismissKeyboard()
                     saveHomeLocation(point)
                     homeSearchText = ""
                     homeMessage = nil
@@ -3003,6 +3018,7 @@ struct ContentView: View {
             } catch {
                 await MainActor.run {
                     homeSearchFocused = false
+                    dismissKeyboard()
                     isSearchingHome = false
                     homeMessage = "Home search failed. Try a more specific place name."
                 }
@@ -3039,11 +3055,12 @@ struct ContentView: View {
     }
 
     private func savePlannedRoute() {
-        let trimmedName = saveRouteName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty, waypoints.count > 1 else {
+        let trimmedName = trimmedRouteSaveName
+        guard canSaveCurrentRoute else {
             return
         }
 
+        dismissKeyboard()
         let routeDistance = routeLegs.reduce(0) { $0 + $1.distance }
         let savedRoute = SavedRoute(name: trimmedName, waypoints: waypoints, distanceMeters: routeDistance > 0 ? routeDistance : nil)
         savedRoutes.removeAll { $0.name.localizedCaseInsensitiveCompare(trimmedName) == .orderedSame }
