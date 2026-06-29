@@ -145,8 +145,107 @@ struct NavigationDecisionSnapshot {
     let selectionReason: String
 }
 
+struct NavigationRouteMatchCandidate {
+    let distanceFromRouteStart: CLLocationDistance
+    let distanceToRoute: CLLocationDistance
+    let routeBearingDegrees: Double
+}
+
+enum NavigationRouteMatching {
+    static func selectedCandidateIndex(
+        candidates: [NavigationRouteMatchCandidate],
+        acceptedProgress: CLLocationDistance?,
+        elapsed: TimeInterval,
+        speed: CLLocationSpeed,
+        course: CLLocationDirection?,
+        isOffRoute: Bool
+    ) -> Int? {
+        let eligibleCandidates: [(offset: Int, element: NavigationRouteMatchCandidate)]
+        if isOffRoute || acceptedProgress == nil {
+            eligibleCandidates = Array(candidates.enumerated())
+        } else {
+            let maximumForwardProgress = max(250, max(speed, 0) * max(elapsed, 1) * 3 + 100)
+            eligibleCandidates = candidates.enumerated().filter {
+                guard let acceptedProgress else {
+                    return true
+                }
+
+                let progressDelta = $0.element.distanceFromRouteStart - acceptedProgress
+                return progressDelta >= -80 && progressDelta <= maximumForwardProgress
+            }
+        }
+
+        return eligibleCandidates.min {
+            score($0.element, course: course) < score($1.element, course: course)
+        }?.offset
+    }
+
+    static func offRouteThreshold(horizontalAccuracy: CLLocationAccuracy) -> CLLocationDistance {
+        max(65, horizontalAccuracy * 1.5)
+    }
+
+    static func shouldDeclareOffRoute(consecutiveFixes: Int, duration: TimeInterval) -> Bool {
+        consecutiveFixes >= 3 && duration >= 8
+    }
+
+    private static func score(_ candidate: NavigationRouteMatchCandidate, course: CLLocationDirection?) -> Double {
+        guard let course else {
+            return candidate.distanceToRoute
+        }
+
+        let difference = abs(
+            ((candidate.routeBearingDegrees - course + 540).truncatingRemainder(dividingBy: 360)) - 180
+        )
+        return candidate.distanceToRoute + (difference / 180 * 40)
+    }
+}
+
+enum NavigationArrivalPolicy {
+    static func isArmed(wasArmed: Bool, destinationDistance: CLLocationDistance) -> Bool {
+        wasArmed || destinationDistance > 300
+    }
+
+    static func shouldArrive(
+        remainingRouteDistance: CLLocationDistance,
+        destinationDistance: CLLocationDistance,
+        isArmed: Bool
+    ) -> Bool {
+        isArmed && remainingRouteDistance <= 120 && destinationDistance <= 150
+    }
+}
+
+enum NavigationDeadReckoning {
+    static let maximumDuration: TimeInterval = 8
+
+    static func estimatedProgress(
+        from routeProgress: CLLocationDistance,
+        speed: CLLocationSpeed,
+        locationAge: TimeInterval,
+        routeBearing: CLLocationDirection,
+        course: CLLocationDirection?,
+        nextConstraintProgress: CLLocationDistance?,
+        totalRouteDistance: CLLocationDistance
+    ) -> CLLocationDistance? {
+        guard locationAge >= 1.5,
+              locationAge <= maximumDuration,
+              speed >= 1.4,
+              let course,
+              bearingDifference(routeBearing, course) <= 45 else {
+            return nil
+        }
+
+        let unconstrainedProgress = routeProgress + min(speed * locationAge, 120)
+        let constraintLimit = nextConstraintProgress.map { max(routeProgress, $0 - 5) } ?? totalRouteDistance
+        return min(unconstrainedProgress, min(constraintLimit, totalRouteDistance))
+    }
+
+    private static func bearingDifference(_ first: CLLocationDirection, _ second: CLLocationDirection) -> Double {
+        abs(((first - second + 540).truncatingRemainder(dividingBy: 360)) - 180)
+    }
+}
+
 enum NavigationDecisionEngine {
-    static func snapshot(totalDistance: CLLocationDistance, routeProgress: NavigationDecisionRouteProgress, legs: [NavigationDecisionLeg], progressWindow: NavigationDecisionProgressWindow?) -> (snapshot: NavigationDecisionSnapshot, progressWindow: NavigationDecisionProgressWindow?) {
+    static func snapshot(totalDistance: CLLocationDistance, routeProgress: NavigationDecisionRouteProgress, legs: [NavigationDecisionLeg], progressWindow: NavigationDecisionProgressWindow?, destinationDistance: CLLocationDistance? = nil, arrivalArmed: Bool = true) -> (snapshot: NavigationDecisionSnapshot, progressWindow: NavigationDecisionProgressWindow?) {
         let remainingDistance = max(totalDistance - routeProgress.distanceFromRouteStart, 0)
         let instructionSelection = nextInstructionSelection(after: routeProgress, legs: legs)
         let instruction = instructionSelection?.instruction
@@ -155,11 +254,17 @@ enum NavigationDecisionEngine {
             max($0 - routeProgress.distanceFromRouteStart, 0)
         } ?? max(routeProgress.legDistance - routeProgress.distanceFromLegStart, 0)
         let tripProgress = totalDistance > 0 ? Int(((routeProgress.distanceFromRouteStart / totalDistance) * 100).rounded()) : 0
-        let isArriving = remainingDistance <= 120 || instruction?.maneuver == .arrive
+        let straightLineDestinationDistance = destinationDistance ?? remainingDistance
+        let isArriving = NavigationArrivalPolicy.shouldArrive(
+            remainingRouteDistance: remainingDistance,
+            destinationDistance: straightLineDestinationDistance,
+            isArmed: arrivalArmed
+        )
+        let isEarlyArrivalInstruction = instruction?.maneuver == .arrive && !isArriving
         let continueThresholdMeters: CLLocationDistance = instruction?.maneuver.isBend == true ? 400 : 1609.344
-        let shouldContinue = !isArriving && remainingManeuver > continueThresholdMeters
+        let shouldContinue = !isArriving && (isEarlyArrivalInstruction || remainingManeuver > continueThresholdMeters)
         let displayedManeuverDistance = shouldContinue
-            ? max(remainingManeuver - continueThresholdMeters, 1)
+            ? (isEarlyArrivalInstruction ? remainingDistance : max(remainingManeuver - continueThresholdMeters, 1))
             : (isArriving ? remainingDistance : remainingManeuver)
         let maneuver = isArriving ? NavigationDecisionManeuver.arrive : (shouldContinue ? .continueAhead : (instruction?.maneuver ?? .continueAhead))
         let progressDistance = isArriving ? remainingDistance : (shouldContinue ? displayedManeuverDistance : remainingManeuver)
@@ -174,7 +279,11 @@ enum NavigationDecisionEngine {
             remainingDistance: progressDistance,
             progressWindow: progressWindow
         )
-        let selectionReason = isArriving ? "Arriving" : (shouldContinue ? "Synthetic continue: selected instruction activates in \(Int(displayedManeuverDistance.rounded()))m" : "Selected instruction")
+        let selectionReason = isArriving
+            ? "Arriving"
+            : (isEarlyArrivalInstruction
+                ? "Approaching destination: arrival gate is \(Int(remainingDistance.rounded()))m away"
+                : (shouldContinue ? "Synthetic continue: selected instruction activates in \(Int(displayedManeuverDistance.rounded()))m" : "Selected instruction"))
 
         return (NavigationDecisionSnapshot(
             distanceToDestinationMeters: Int(remainingDistance.rounded()),

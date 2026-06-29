@@ -44,6 +44,9 @@ struct ContentView: View {
     @State private var searchEditorPresented = false
     @State private var navigationDebugLog: [String] = []
     @State private var activeManeuverProgressWindow: ManeuverProgressWindow?
+    @State private var routeTrackingState = RouteTrackingState()
+    @State private var lastReliableRideSnapshot: RideNavigationSnapshot?
+    @State private var arrivalArmed = false
     @State private var selectedDebugInstructionID: String?
     @State private var routeAuditMessage: String?
     @State private var saveRouteName = ""
@@ -1648,6 +1651,9 @@ struct ContentView: View {
 
     private func startRoute() {
         activeManeuverProgressWindow = nil
+        routeTrackingState = RouteTrackingState()
+        lastReliableRideSnapshot = nil
+        arrivalArmed = false
         guard let payload = rideStartPayload() else {
             return
         }
@@ -1682,6 +1688,9 @@ struct ContentView: View {
         smoothedDestinationBearing = nil
         debugRideDistanceMeters = nil
         activeManeuverProgressWindow = nil
+        routeTrackingState = RouteTrackingState()
+        lastReliableRideSnapshot = nil
+        arrivalArmed = false
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
@@ -1850,7 +1859,9 @@ struct ContentView: View {
             "outgoing=\(outgoing)",
             "sentAngles=\(sentAngles)",
             "selected='\(snapshot.selectedInstructionText)'",
-            "decision='\(snapshot.selectionReason)'"
+            "decision='\(snapshot.selectionReason)'",
+            "tracking='\(routeTrackingState.status)'",
+            "arrivalArmed=\(arrivalArmed)"
         ].joined(separator: " | ")
 
         navigationDebugLog.append(entry)
@@ -2143,7 +2154,14 @@ struct ContentView: View {
             return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress, currentCoordinate: nil, progressWindow: progressWindow)
         }
 
-        guard let currentCoordinate = locationProvider.currentCoordinate else {
+        guard let currentLocation = locationProvider.currentLocation,
+              currentLocation.horizontalAccuracy >= 0,
+              currentLocation.horizontalAccuracy <= 80 else {
+            routeTrackingState.status = "GPS unavailable: holding last reliable guidance"
+            if let lastReliableRideSnapshot {
+                return (lastReliableRideSnapshot, progressWindow)
+            }
+
             return (RideNavigationSnapshot(
                 distanceToDestinationMeters: max(fallbackDistance, 0),
                 distanceToManeuverMeters: max(fallbackManeuver, 0),
@@ -2166,24 +2184,88 @@ struct ContentView: View {
             ), nil)
         }
 
-        let routeProgress = nearestRouteProgress(to: currentCoordinate)
-        if routeProgress == nil || routeProgress!.distanceToRoute > offRouteThresholdMeters {
-            return (offRouteSnapshot(
+        let locationAge = max(-currentLocation.timestamp.timeIntervalSinceNow, 0)
+        if locationAge >= 1.5 {
+            if let estimatedProgress = deadReckonedRouteProgress(
+                locationAge: locationAge,
+                speed: locationProvider.currentSpeedMetersPerSecond ?? 0,
+                course: locationProvider.currentCourseDegrees
+            ) {
+                routeTrackingState.status = "Dead reckoning: \(Int(locationAge.rounded()))s GPS gap"
+                let estimatedResult = rideNavigationSnapshot(
+                    totalDistance: totalDistance,
+                    routeProgress: estimatedProgress,
+                    currentCoordinate: estimatedProgress.coordinate,
+                    progressWindow: progressWindow,
+                    allowArrival: false
+                )
+                lastReliableRideSnapshot = estimatedResult.snapshot
+                return (estimatedResult.snapshot, progressWindow)
+            }
+
+            routeTrackingState.status = "GPS unavailable: holding last reliable guidance"
+            if let lastReliableRideSnapshot {
+                return (lastReliableRideSnapshot, progressWindow)
+            }
+        }
+
+        let currentCoordinate = currentLocation.coordinate
+        let tracking = trackedRouteProgress(for: currentLocation)
+        if tracking.isReliableMatch {
+            arrivalArmed = NavigationArrivalPolicy.isArmed(
+                wasArmed: arrivalArmed,
+                destinationDistance: distanceToDestination(from: currentCoordinate)
+            )
+        }
+        if tracking.isOffRoute {
+            let snapshot = offRouteSnapshot(
                 totalDistance: totalDistance,
                 currentCoordinate: currentCoordinate,
-                routeProgress: routeProgress,
-                reason: routeProgress.map { "Off route: \(formatDebugDistance($0.distanceToRoute)) from route" } ?? "Off route: no route projection"
+                routeProgress: tracking.progress,
+                reason: tracking.reason
+            )
+            lastReliableRideSnapshot = snapshot
+            return (snapshot, nil)
+        }
+
+        guard let routeProgress = tracking.progress else {
+            return (RideNavigationSnapshot(
+                distanceToDestinationMeters: max(fallbackDistance, 0),
+                distanceToManeuverMeters: max(fallbackManeuver, 0),
+                destinationBearingDegrees: fallbackBearing,
+                tripProgressComplete: 0,
+                maneuverProgressRemaining: 100,
+                maneuver: fallbackInstruction?.maneuver ?? .continueAhead,
+                roundaboutExit: fallbackInstruction?.roundaboutExit,
+                roundaboutExitAngles: fallbackInstruction?.roundaboutExitAngles ?? [],
+                selectedInstruction: fallbackInstruction,
+                selectedInstructionCoordinate: nil,
+                selectedInstructionText: fallbackInstruction?.rawInstruction ?? "Awaiting reliable route position",
+                selectedInstructionOffsetMeters: fallbackInstruction?.distanceFromLegStart,
+                selectedInstructionEndMeters: fallbackInstruction.map { $0.distanceFromLegStart + $0.distance },
+                selectedInstructionTargetOffsetMeters: nil,
+                routeProgressMeters: 0,
+                distanceToRouteMeters: tracking.progress?.distanceToRoute ?? -1,
+                isOffRoute: false,
+                selectionReason: tracking.reason
             ), nil)
         }
 
-        return rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress!, currentCoordinate: currentCoordinate, progressWindow: progressWindow)
+        let result = rideNavigationSnapshot(
+            totalDistance: totalDistance,
+            routeProgress: routeProgress,
+            currentCoordinate: currentCoordinate,
+            progressWindow: progressWindow
+        )
+        lastReliableRideSnapshot = result.snapshot
+        return result
     }
 
     private func rideNavigationSnapshot(totalDistance: CLLocationDistance, routeProgress: RouteProgress, currentCoordinate: CLLocationCoordinate2D?) -> RideNavigationSnapshot {
         rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress, currentCoordinate: currentCoordinate, progressWindow: nil).snapshot
     }
 
-    private func rideNavigationSnapshot(totalDistance: CLLocationDistance, routeProgress: RouteProgress, currentCoordinate: CLLocationCoordinate2D?, progressWindow: ManeuverProgressWindow?) -> (snapshot: RideNavigationSnapshot, progressWindow: ManeuverProgressWindow?) {
+    private func rideNavigationSnapshot(totalDistance: CLLocationDistance, routeProgress: RouteProgress, currentCoordinate: CLLocationCoordinate2D?, progressWindow: ManeuverProgressWindow?, allowArrival: Bool = true) -> (snapshot: RideNavigationSnapshot, progressWindow: ManeuverProgressWindow?) {
         let destinationBearing = currentCoordinate.map {
             relativeDestinationBearing(from: $0, routeProgress: routeProgress)
         } ?? relativeDestinationBearing(routeProgress: routeProgress)
@@ -2191,7 +2273,9 @@ struct ContentView: View {
             totalDistance: totalDistance,
             routeProgress: navigationDecisionProgress(from: routeProgress),
             legs: navigationDecisionLegs,
-            progressWindow: progressWindow
+            progressWindow: progressWindow,
+            destinationDistance: currentCoordinate.map { distanceToDestination(from: $0) },
+            arrivalArmed: currentCoordinate == nil ? true : (arrivalArmed && allowArrival)
         )
         let decisionSnapshot = decisionResult.snapshot
         let instruction = routeInstruction(for: decisionSnapshot.selectedInstruction)
@@ -2219,10 +2303,6 @@ struct ContentView: View {
             isOffRoute: false,
             selectionReason: decisionSnapshot.selectionReason
         ), decisionResult.progressWindow)
-    }
-
-    private var offRouteThresholdMeters: CLLocationDistance {
-        65
     }
 
     private func offRouteSnapshot(totalDistance: CLLocationDistance, currentCoordinate: CLLocationCoordinate2D, routeProgress: RouteProgress?, reason: String) -> RideNavigationSnapshot {
@@ -2278,36 +2358,214 @@ struct ContentView: View {
         return nil
     }
 
-    private func nearestRouteProgress(to coordinate: CLLocationCoordinate2D) -> RouteProgress? {
-        var totalBeforeLeg: CLLocationDistance = 0
-        var nearestProgress: RouteProgress?
+    private func deadReckonedRouteProgress(
+        locationAge: TimeInterval,
+        speed: CLLocationSpeed,
+        course: CLLocationDirection?
+    ) -> RouteProgress? {
+        guard let acceptedProgress = routeTrackingState.acceptedProgress else {
+            return nil
+        }
 
-        for leg in routeLegs {
-            guard let legProgress = leg.polyline.progressNearest(to: coordinate) else {
-                totalBeforeLeg += leg.distance
-                continue
-            }
-
-            let distanceFraction = legProgress.polylineLength > 0 ? legProgress.distanceFromStart / legProgress.polylineLength : 0
-            let distanceFromLegStart = max(0, min(leg.distance, leg.distance * distanceFraction))
-            let routeProgress = RouteProgress(
-                legID: leg.id,
-                distanceToRoute: legProgress.distanceToRoute,
-                distanceFromLegStart: distanceFromLegStart,
-                distanceFromRouteStart: totalBeforeLeg + distanceFromLegStart,
-                legDistance: leg.distance,
-                routeBearingDegrees: legProgress.routeBearingDegrees,
-                coordinate: legProgress.coordinate
+        let unconstrainedEnd = min(
+            acceptedProgress.distanceFromRouteStart + min(speed * locationAge, 120),
+            totalRouteDistance
+        )
+        let nextConstraint = [
+            nextManeuverRouteProgress(after: acceptedProgress.distanceFromRouteStart),
+            nextAmbiguousRouteProgress(
+                after: acceptedProgress.distanceFromRouteStart,
+                upTo: unconstrainedEnd
             )
+        ].compactMap { $0 }.min()
 
-            if nearestProgress == nil || routeProgress.distanceToRoute < nearestProgress!.distanceToRoute {
-                nearestProgress = routeProgress
+        guard let estimatedDistance = NavigationDeadReckoning.estimatedProgress(
+            from: acceptedProgress.distanceFromRouteStart,
+            speed: speed,
+            locationAge: locationAge,
+            routeBearing: acceptedProgress.routeBearingDegrees,
+            course: course,
+            nextConstraintProgress: nextConstraint,
+            totalRouteDistance: totalRouteDistance
+        ) else {
+            return nil
+        }
+
+        return simulatedRouteProgress(at: estimatedDistance)
+    }
+
+    private func nextManeuverRouteProgress(after routeProgress: CLLocationDistance) -> CLLocationDistance? {
+        var totalBeforeLeg: CLLocationDistance = 0
+        var nextProgress: CLLocationDistance?
+
+        for leg in navigationDecisionLegs {
+            for instruction in leg.instructions where instruction.maneuver.isMeaningfulDirection {
+                let target = totalBeforeLeg + instruction.targetDistanceFromLegStart
+                if target > routeProgress,
+                   target < (nextProgress ?? .greatestFiniteMagnitude) {
+                    nextProgress = target
+                }
             }
 
             totalBeforeLeg += leg.distance
         }
 
-        return nearestProgress
+        return nextProgress
+    }
+
+    private func nextAmbiguousRouteProgress(
+        after routeProgress: CLLocationDistance,
+        upTo maximumProgress: CLLocationDistance
+    ) -> CLLocationDistance? {
+        var sampleProgress = routeProgress + 10
+
+        while sampleProgress <= maximumProgress {
+            guard let coordinate = simulatedRouteProgress(at: sampleProgress)?.coordinate else {
+                return nil
+            }
+
+            let hasNearbyDistantSegment = routeProgressCandidates(to: coordinate).contains {
+                $0.distanceToRoute <= 20
+                    && abs($0.distanceFromRouteStart - sampleProgress) > 100
+            }
+            if hasNearbyDistantSegment {
+                return sampleProgress
+            }
+
+            sampleProgress += 10
+        }
+
+        return nil
+    }
+
+    private func nearestRouteProgress(to coordinate: CLLocationCoordinate2D) -> RouteProgress? {
+        let candidates = routeProgressCandidates(to: coordinate)
+        return selectedRouteProgress(
+            from: candidates,
+            acceptedProgress: nil,
+            elapsed: 0,
+            isOffRoute: true
+        )
+    }
+
+    private func trackedRouteProgress(for location: CLLocation) -> RouteTrackingResolution {
+        if routeTrackingState.lastEvaluatedLocationTimestamp == location.timestamp {
+            return RouteTrackingResolution(
+                progress: routeTrackingState.isOffRoute
+                    ? routeTrackingState.lastEvaluatedCandidate
+                    : routeTrackingState.acceptedProgress,
+                isOffRoute: routeTrackingState.isOffRoute,
+                isReliableMatch: routeTrackingState.lastFixMatchedRoute,
+                reason: routeTrackingState.status
+            )
+        }
+
+        let candidates = routeProgressCandidates(to: location.coordinate)
+        let globalCandidate = selectedRouteProgress(
+            from: candidates,
+            acceptedProgress: nil,
+            elapsed: 0,
+            isOffRoute: true
+        )
+        let threshold = NavigationRouteMatching.offRouteThreshold(horizontalAccuracy: location.horizontalAccuracy)
+        let elapsed = max(location.timestamp.timeIntervalSince(routeTrackingState.acceptedLocationTimestamp ?? location.timestamp), 0)
+        let matchedCandidate = selectedRouteProgress(
+            from: candidates,
+            acceptedProgress: routeTrackingState.acceptedProgress?.distanceFromRouteStart,
+            elapsed: elapsed,
+            isOffRoute: routeTrackingState.isOffRoute
+        )
+
+        routeTrackingState.lastEvaluatedLocationTimestamp = location.timestamp
+        routeTrackingState.lastEvaluatedCandidate = globalCandidate
+
+        if let matchedCandidate,
+           matchedCandidate.distanceToRoute <= threshold {
+            routeTrackingState.acceptedProgress = matchedCandidate
+            routeTrackingState.acceptedLocationTimestamp = location.timestamp
+            routeTrackingState.consecutiveOffRouteFixes = 0
+            routeTrackingState.offRouteSince = nil
+            routeTrackingState.isOffRoute = false
+            routeTrackingState.lastFixMatchedRoute = true
+            routeTrackingState.status = "Matched route"
+            return RouteTrackingResolution(progress: matchedCandidate, isOffRoute: false, isReliableMatch: true, reason: routeTrackingState.status)
+        }
+
+        routeTrackingState.lastFixMatchedRoute = false
+        routeTrackingState.consecutiveOffRouteFixes += 1
+        if routeTrackingState.offRouteSince == nil {
+            routeTrackingState.offRouteSince = location.timestamp
+        }
+
+        let offRouteDuration = location.timestamp.timeIntervalSince(routeTrackingState.offRouteSince ?? location.timestamp)
+        if NavigationRouteMatching.shouldDeclareOffRoute(
+            consecutiveFixes: routeTrackingState.consecutiveOffRouteFixes,
+            duration: offRouteDuration
+        ) {
+            routeTrackingState.isOffRoute = true
+            let gap = matchedCandidate?.distanceToRoute ?? globalCandidate?.distanceToRoute
+            routeTrackingState.status = gap.map {
+                "Off route: \(formatDebugDistance($0)) from plausible route position"
+            } ?? "Off route: no route projection"
+            return RouteTrackingResolution(progress: globalCandidate, isOffRoute: true, isReliableMatch: false, reason: routeTrackingState.status)
+        }
+
+        routeTrackingState.status = "Holding route through uncertain GPS fix \(routeTrackingState.consecutiveOffRouteFixes)/3"
+        return RouteTrackingResolution(
+            progress: routeTrackingState.acceptedProgress,
+            isOffRoute: false,
+            isReliableMatch: false,
+            reason: routeTrackingState.status
+        )
+    }
+
+    private func selectedRouteProgress(
+        from candidates: [RouteProgress],
+        acceptedProgress: CLLocationDistance?,
+        elapsed: TimeInterval,
+        isOffRoute: Bool
+    ) -> RouteProgress? {
+        let speed = locationProvider.currentSpeedMetersPerSecond ?? 0
+        let index = NavigationRouteMatching.selectedCandidateIndex(
+            candidates: candidates.map {
+                NavigationRouteMatchCandidate(
+                    distanceFromRouteStart: $0.distanceFromRouteStart,
+                    distanceToRoute: $0.distanceToRoute,
+                    routeBearingDegrees: $0.routeBearingDegrees
+                )
+            },
+            acceptedProgress: acceptedProgress,
+            elapsed: elapsed,
+            speed: speed,
+            course: speed > 1.4 ? locationProvider.currentCourseDegrees : nil,
+            isOffRoute: isOffRoute
+        )
+        return index.map { candidates[$0] }
+    }
+
+    private func routeProgressCandidates(to coordinate: CLLocationCoordinate2D) -> [RouteProgress] {
+        var totalBeforeLeg: CLLocationDistance = 0
+        var candidates: [RouteProgress] = []
+
+        for leg in routeLegs {
+            for legProgress in leg.polyline.progressCandidates(to: coordinate) {
+                let distanceFraction = legProgress.polylineLength > 0 ? legProgress.distanceFromStart / legProgress.polylineLength : 0
+                let distanceFromLegStart = max(0, min(leg.distance, leg.distance * distanceFraction))
+                candidates.append(RouteProgress(
+                    legID: leg.id,
+                    distanceToRoute: legProgress.distanceToRoute,
+                    distanceFromLegStart: distanceFromLegStart,
+                    distanceFromRouteStart: totalBeforeLeg + distanceFromLegStart,
+                    legDistance: leg.distance,
+                    routeBearingDegrees: legProgress.routeBearingDegrees,
+                    coordinate: legProgress.coordinate
+                ))
+            }
+
+            totalBeforeLeg += leg.distance
+        }
+
+        return candidates
     }
 
     private var navigationDecisionLegs: [NavigationDecisionLeg] {
@@ -2516,7 +2774,9 @@ struct ContentView: View {
     }
 
     private var currentSpeedMph: Int {
-        guard let speedMetersPerSecond = locationProvider.currentSpeedMetersPerSecond,
+        guard let location = locationProvider.currentLocation,
+              max(-location.timestamp.timeIntervalSinceNow, 0) <= NavigationDeadReckoning.maximumDuration,
+              let speedMetersPerSecond = locationProvider.currentSpeedMetersPerSecond,
               speedMetersPerSecond > 0 else {
             return 0
         }
@@ -2726,6 +2986,9 @@ struct ContentView: View {
 
     private func recalculateRoute() {
         routeCalculationTask?.cancel()
+        routeTrackingState = RouteTrackingState()
+        lastReliableRideSnapshot = nil
+        arrivalArmed = false
 
         guard waypoints.count > 1 else {
             routeLegs = []
@@ -3757,6 +4020,25 @@ private struct RouteProgress {
     let coordinate: CLLocationCoordinate2D?
 }
 
+private struct RouteTrackingState {
+    var acceptedProgress: RouteProgress?
+    var acceptedLocationTimestamp: Date?
+    var lastEvaluatedLocationTimestamp: Date?
+    var lastEvaluatedCandidate: RouteProgress?
+    var consecutiveOffRouteFixes = 0
+    var offRouteSince: Date?
+    var isOffRoute = false
+    var lastFixMatchedRoute = false
+    var status = "Awaiting route match"
+}
+
+private struct RouteTrackingResolution {
+    let progress: RouteProgress?
+    let isOffRoute: Bool
+    let isReliableMatch: Bool
+    let reason: String
+}
+
 private struct DebugMapArrow: Identifiable {
     let id = UUID()
     let coordinates: [CLLocationCoordinate2D]
@@ -4265,45 +4547,40 @@ private extension MKPolyline {
         return coordinates.last
     }
 
-    func progressNearest(to coordinate: CLLocationCoordinate2D) -> PolylineProgress? {
+    func progressCandidates(to coordinate: CLLocationCoordinate2D) -> [PolylineProgress] {
         let coordinates = routeCoordinates
         guard coordinates.count > 1 else {
-            return nil
+            return []
         }
 
         let targetPoint = MKMapPoint(coordinate)
         var distanceFromStart: CLLocationDistance = 0
-        var bestDistance = CLLocationDistance.greatestFiniteMagnitude
-        var bestDistanceFromStart: CLLocationDistance = 0
-        var bestBearing = 0.0
-        var bestCoordinate = coordinates[0]
+        var candidates: [PolylineProgress] = []
+        let polylineLength = zip(coordinates, coordinates.dropFirst()).reduce(0) {
+            $0 + MKMapPoint($1.0).distance(to: MKMapPoint($1.1))
+        }
 
         for (startCoordinate, endCoordinate) in zip(coordinates, coordinates.dropFirst()) {
             let startPoint = MKMapPoint(startCoordinate)
             let endPoint = MKMapPoint(endCoordinate)
             let segmentDistance = startPoint.distance(to: endPoint)
             let projectedDistance = targetPoint.projectedDistance(from: startPoint, to: endPoint)
-
-            if projectedDistance.distanceToSegment < bestDistance {
-                bestDistance = projectedDistance.distanceToSegment
-                bestDistanceFromStart = distanceFromStart + (segmentDistance * projectedDistance.fractionAlongSegment)
-                bestBearing = Double(startCoordinate.bearingDegrees(to: endCoordinate))
-                bestCoordinate = MKMapPoint(
+            let projectedCoordinate = MKMapPoint(
                     x: startPoint.x + ((endPoint.x - startPoint.x) * projectedDistance.fractionAlongSegment),
                     y: startPoint.y + ((endPoint.y - startPoint.y) * projectedDistance.fractionAlongSegment)
                 ).coordinate
-            }
+            candidates.append(PolylineProgress(
+                distanceToRoute: projectedDistance.distanceToSegment,
+                distanceFromStart: distanceFromStart + (segmentDistance * projectedDistance.fractionAlongSegment),
+                polylineLength: polylineLength,
+                routeBearingDegrees: Double(startCoordinate.bearingDegrees(to: endCoordinate)),
+                coordinate: projectedCoordinate
+            ))
 
             distanceFromStart += segmentDistance
         }
 
-        return PolylineProgress(
-            distanceToRoute: bestDistance,
-            distanceFromStart: bestDistanceFromStart,
-            polylineLength: distanceFromStart,
-            routeBearingDegrees: bestBearing,
-            coordinate: bestCoordinate
-        )
+        return candidates
     }
 }
 
@@ -4377,6 +4654,7 @@ private enum SampleRoute {
 
 private final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var currentCoordinate: CLLocationCoordinate2D?
+    @Published var currentLocation: CLLocation?
     @Published var currentCourseDegrees: Double?
     @Published var currentSpeedMetersPerSecond: CLLocationSpeed?
 
@@ -4452,16 +4730,23 @@ private final class LocationProvider: NSObject, ObservableObject, CLLocationMana
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else {
+        let now = Date()
+        guard let location = locations.reversed().first(where: {
+            $0.horizontalAccuracy >= 0
+                && $0.horizontalAccuracy <= 80
+                && abs($0.timestamp.timeIntervalSince(now)) <= 15
+        }) else {
             return
         }
 
-        currentCoordinate = location.coordinate
         currentSpeedMetersPerSecond = max(location.speed, 0)
 
         if location.course >= 0 && location.speed > 1.4 {
             currentCourseDegrees = location.course
         }
+
+        currentLocation = location
+        currentCoordinate = location.coordinate
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

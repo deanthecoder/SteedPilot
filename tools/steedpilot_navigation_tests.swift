@@ -129,6 +129,125 @@ private struct NavigationTests {
             try assertEqual(nearDestination.maneuver, .arrive, "Arrival should be selected inside the destination threshold")
             try assertEqual(nearDestination.distanceToDestinationMeters, 84, "Arrival distance should be remaining trip distance")
         },
+        TestCase(name: "Early MapKit arrival instruction remains continue") {
+            let instructions = [
+                makeInstruction(index: 0, start: 1000, distance: 1609, raw: "Arrive at the destination", maneuver: .arrive)
+            ]
+
+            let early = snapshot(total: 2609, instructions: instructions, progress: 1000).snapshot
+            try assertEqual(early.maneuver, .continueAhead, "An arrival step beginning a mile early must remain continue")
+            try assertEqual(early.distanceToDestinationMeters, 1609, "Early arrival should retain the route distance to destination")
+        },
+        TestCase(name: "Arrival requires physical proximity to destination") {
+            let nearRouteEndButPhysicallyDistant = snapshot(
+                total: 2034,
+                instructions: aGMotorsInstructions,
+                progress: 1950,
+                destinationDistance: 1609
+            ).snapshot
+            try assertTrue(nearRouteEndButPhysicallyDistant.maneuver != .arrive, "A route projection near the end must not finish while physically distant")
+        },
+        TestCase(name: "Arrival remains blocked until armed") {
+            let unarmed = snapshot(
+                total: 2034,
+                instructions: aGMotorsInstructions,
+                progress: 1950,
+                destinationDistance: 84,
+                arrivalArmed: false
+            ).snapshot
+            try assertTrue(unarmed.maneuver != .arrive, "Starting inside the destination area must not immediately finish a circular route")
+        },
+        TestCase(name: "Leaving the destination area permanently arms arrival") {
+            let armedAwayFromHome = NavigationArrivalPolicy.isArmed(wasArmed: false, destinationDistance: 301)
+            let remainsArmedOnReturn = NavigationArrivalPolicy.isArmed(wasArmed: armedAwayFromHome, destinationDistance: 84)
+            try assertTrue(armedAwayFromHome, "Moving beyond the departure radius should arm arrival")
+            try assertTrue(remainsArmedOnReturn, "Arrival should remain armed when returning home")
+        },
+        TestCase(name: "Dead reckoning advances briefly along the route") {
+            let estimated = NavigationDeadReckoning.estimatedProgress(
+                from: 1_000,
+                speed: 8,
+                locationAge: 5,
+                routeBearing: 90,
+                course: 95,
+                nextConstraintProgress: 1_200,
+                totalRouteDistance: 5_000
+            )
+            try assertApprox(estimated ?? -1, 1_040, "A short GPS gap should advance by speed times elapsed time")
+        },
+        TestCase(name: "Dead reckoning stops before the next maneuver") {
+            let estimated = NavigationDeadReckoning.estimatedProgress(
+                from: 1_000,
+                speed: 12,
+                locationAge: 8,
+                routeBearing: 90,
+                course: 90,
+                nextConstraintProgress: 1_050,
+                totalRouteDistance: 5_000
+            )
+            try assertApprox(estimated ?? -1, 1_045, "Estimated progress must not pass the next maneuver")
+        },
+        TestCase(name: "Dead reckoning expires and rejects incompatible heading") {
+            let expired = NavigationDeadReckoning.estimatedProgress(
+                from: 1_000,
+                speed: 8,
+                locationAge: 9,
+                routeBearing: 90,
+                course: 90,
+                nextConstraintProgress: nil,
+                totalRouteDistance: 5_000
+            )
+            let wrongDirection = NavigationDeadReckoning.estimatedProgress(
+                from: 1_000,
+                speed: 8,
+                locationAge: 5,
+                routeBearing: 90,
+                course: 180,
+                nextConstraintProgress: nil,
+                totalRouteDistance: 5_000
+            )
+            try assertTrue(expired == nil, "Dead reckoning must expire after eight seconds")
+            try assertTrue(wrongDirection == nil, "Dead reckoning must not advance when heading disagrees with the route")
+        },
+        TestCase(name: "Route crossing preserves plausible progress") {
+            let candidates = [
+                NavigationRouteMatchCandidate(distanceFromRouteStart: 1_020, distanceToRoute: 5, routeBearingDegrees: 0),
+                NavigationRouteMatchCandidate(distanceFromRouteStart: 9_000, distanceToRoute: 1, routeBearingDegrees: 180)
+            ]
+            let selected = NavigationRouteMatching.selectedCandidateIndex(
+                candidates: candidates,
+                acceptedProgress: 1_000,
+                elapsed: 2,
+                speed: 8,
+                course: 0,
+                isOffRoute: false
+            )
+            try assertEqual(selected, 0, "A nearby crossing must not jump several miles ahead")
+        },
+        TestCase(name: "Heading disambiguates overlapping route segments") {
+            let candidates = [
+                NavigationRouteMatchCandidate(distanceFromRouteStart: 1_000, distanceToRoute: 4, routeBearingDegrees: 0),
+                NavigationRouteMatchCandidate(distanceFromRouteStart: 1_000, distanceToRoute: 1, routeBearingDegrees: 180)
+            ]
+            let selected = NavigationRouteMatching.selectedCandidateIndex(
+                candidates: candidates,
+                acceptedProgress: nil,
+                elapsed: 0,
+                speed: 8,
+                course: 0,
+                isOffRoute: false
+            )
+            try assertEqual(selected, 0, "Travel direction should beat a marginally closer opposing segment")
+        },
+        TestCase(name: "Off-route threshold accounts for GPS accuracy") {
+            try assertApprox(NavigationRouteMatching.offRouteThreshold(horizontalAccuracy: 10), 65, "Accurate GPS should retain the base threshold")
+            try assertApprox(NavigationRouteMatching.offRouteThreshold(horizontalAccuracy: 60), 90, "Uncertain GPS should widen the threshold")
+        },
+        TestCase(name: "Off-route requires sustained bad fixes") {
+            try assertTrue(!NavigationRouteMatching.shouldDeclareOffRoute(consecutiveFixes: 1, duration: 12), "One bad fix must not declare off-route")
+            try assertTrue(!NavigationRouteMatching.shouldDeclareOffRoute(consecutiveFixes: 3, duration: 4), "A short GPS wobble must not declare off-route")
+            try assertTrue(NavigationRouteMatching.shouldDeclareOffRoute(consecutiveFixes: 3, duration: 8), "Sustained bad fixes should declare off-route")
+        },
         TestCase(name: "Continue message leads into the next target instead of hiding it") {
             let instructions = [
                 makeInstruction(index: 0, start: 3800, distance: 200, raw: "At the roundabout, take the first exit", maneuver: .roundabout)
@@ -172,7 +291,7 @@ private struct NavigationTests {
         print("\n\(tests.count) navigation tests passed.")
     }
 
-    private static func snapshot(total: CLLocationDistance, instructions: [NavigationDecisionInstruction], progress: CLLocationDistance, progressWindow: NavigationDecisionProgressWindow? = nil) -> (snapshot: NavigationDecisionSnapshot, progressWindow: NavigationDecisionProgressWindow?) {
+    private static func snapshot(total: CLLocationDistance, instructions: [NavigationDecisionInstruction], progress: CLLocationDistance, progressWindow: NavigationDecisionProgressWindow? = nil, destinationDistance: CLLocationDistance? = nil, arrivalArmed: Bool = true) -> (snapshot: NavigationDecisionSnapshot, progressWindow: NavigationDecisionProgressWindow?) {
         NavigationDecisionEngine.snapshot(
             totalDistance: total,
             routeProgress: NavigationDecisionRouteProgress(
@@ -182,7 +301,9 @@ private struct NavigationTests {
                 legDistance: total
             ),
             legs: [NavigationDecisionLeg(id: legID, distance: total, instructions: instructions)],
-            progressWindow: progressWindow
+            progressWindow: progressWindow,
+            destinationDistance: destinationDistance,
+            arrivalArmed: arrivalArmed
         )
     }
 
