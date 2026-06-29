@@ -41,6 +41,9 @@ struct ContentView: View {
     @State private var showingRouteLibrary = false
     @State private var showingSettings = false
     @State private var showingMapKitDebug = false
+    @State private var presentedRideSummary: RideSummary?
+    @State private var rideHistory: [RideSummary] = []
+    @State private var activeRideRecorder: RideSessionRecorder?
     @State private var searchEditorPresented = false
     @State private var navigationDebugLog: [String] = []
     @State private var activeManeuverProgressWindow: ManeuverProgressWindow?
@@ -106,6 +109,9 @@ struct ContentView: View {
                 }
 
                 sendRideStateFromCurrentLocation()
+            }
+            .onReceive(locationProvider.$currentLocation.compactMap { $0 }) { location in
+                recordRideLocation(location)
             }
             .onChange(of: routeWaypointSignature) { _, _ in
                 recalculateRoute()
@@ -388,6 +394,12 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingSettings) {
             settingsSheet
+        }
+        .sheet(item: $presentedRideSummary) { summary in
+            RideSummarySheet(
+                summary: summary,
+                usesMiles: distanceUnitPreference == .miles
+            )
         }
         .sheet(isPresented: $showingMapKitDebug) {
             MapKitDebugSheet(
@@ -1276,6 +1288,19 @@ struct ContentView: View {
             .navigationTitle("Route Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        RideHistoryContent(
+                            summaries: rideHistory,
+                            usesMiles: distanceUnitPreference == .miles,
+                            deleteSummary: deleteRideSummary
+                        )
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                    .accessibilityLabel("Ride history")
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
                         showingRouteLibrary = false
@@ -1663,17 +1688,26 @@ struct ContentView: View {
         locationProvider.startRideTracking()
         sender.send(payload)
         routeActive = true
+        activeRideRecorder = RideSessionRecorder(
+            name: activeRideName,
+            plannedDistanceMeters: totalRouteDistance
+        )
+        if let location = locationProvider.currentLocation {
+            recordRideLocation(location)
+        }
         UIApplication.shared.isIdleTimerDisabled = true
         setPanelState(.collapsed)
     }
 
     private func configureView() {
         loadSavedRoutes()
+        loadRideHistory()
         loadHomeLocation()
         pingDevice()
     }
 
     private func endRoute() {
+        finishActiveRide()
         stopActiveRoute(sendClear: true)
         setPanelState(.medium)
     }
@@ -1691,6 +1725,7 @@ struct ContentView: View {
         routeTrackingState = RouteTrackingState()
         lastReliableRideSnapshot = nil
         arrivalArmed = false
+        activeRideRecorder = nil
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
@@ -1783,6 +1818,10 @@ struct ContentView: View {
 
     private func directionsRideStartPayload() -> Data? {
         let snapshot = trackedRideNavigationSnapshot()
+        activeRideRecorder?.recordNavigation(
+            isOffRoute: snapshot.isOffRoute,
+            routeCompletionPercent: snapshot.tripProgressComplete
+        )
         appendNavigationDebugLog(snapshot: snapshot, mode: "navigation")
 
         if snapshot.isOffRoute {
@@ -1823,6 +1862,10 @@ struct ContentView: View {
 
     private func headingRideStartPayload() -> Data? {
         let snapshot = rideNavigationSnapshot()
+        activeRideRecorder?.recordNavigation(
+            isOffRoute: snapshot.isOffRoute,
+            routeCompletionPercent: snapshot.tripProgressComplete
+        )
         appendNavigationDebugLog(snapshot: snapshot, mode: "destination")
 
         return makeNavStatePayload([
@@ -3221,6 +3264,7 @@ struct ContentView: View {
 
     private func showRouteLibrary() {
         loadSavedRoutes()
+        loadRideHistory()
         if canSavePlannedRoute && saveRouteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             saveRouteName = defaultRouteSaveName
         }
@@ -3384,6 +3428,117 @@ struct ContentView: View {
         }
 
         UserDefaults.standard.set(data, forKey: SavedRoute.storageKey)
+    }
+
+    private var activeRideName: String {
+        guard let start = waypoints.first?.name,
+              let destination = waypoints.last?.name else {
+            return "Ride"
+        }
+
+        if start == destination {
+            return "Ride from \(start)"
+        }
+        return "\(start) to \(destination)"
+    }
+
+    private func recordRideLocation(_ location: CLLocation) {
+        guard routeActive, let recorder = activeRideRecorder else {
+            return
+        }
+
+        recorder.record(location: location)
+        guard location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= 50,
+              abs(location.timestamp.timeIntervalSinceNow) <= 15 else {
+            return
+        }
+
+        guard recorder.beginWeatherRequest() else {
+            return
+        }
+
+        let recorderID = recorder.id
+        Task {
+            let weather = await RideWeatherClient.currentWeather(at: location)
+            guard activeRideRecorder?.id == recorderID else {
+                return
+            }
+
+            activeRideRecorder?.weather = weather
+        }
+    }
+
+    private func finishActiveRide() {
+        guard let recorder = activeRideRecorder else {
+            return
+        }
+
+        let summary = recorder.finish()
+        activeRideRecorder = nil
+        saveRideSummary(summary)
+        presentedRideSummary = summary
+
+        guard summary.weather == nil,
+              let location = locationProvider.currentLocation else {
+            return
+        }
+
+        Task {
+            guard let weather = await RideWeatherClient.currentWeather(at: location) else {
+                return
+            }
+
+            applyWeather(weather, toRide: summary.id)
+        }
+    }
+
+    private func loadRideHistory() {
+        guard let data = UserDefaults.standard.data(forKey: RideSummary.storageKey),
+              let summaries = try? JSONDecoder().decode([RideSummary].self, from: data) else {
+            rideHistory = []
+            return
+        }
+
+        rideHistory = Array(
+            summaries
+                .sorted { $0.startedAt > $1.startedAt }
+                .prefix(RideSummary.maximumHistoryCount)
+        )
+    }
+
+    private func saveRideSummary(_ summary: RideSummary) {
+        rideHistory.removeAll { $0.id == summary.id }
+        rideHistory.insert(summary, at: 0)
+        if rideHistory.count > RideSummary.maximumHistoryCount {
+            rideHistory.removeLast(rideHistory.count - RideSummary.maximumHistoryCount)
+        }
+        persistRideHistory()
+    }
+
+    private func applyWeather(_ weather: RideWeatherSnapshot, toRide id: UUID) {
+        if let index = rideHistory.firstIndex(where: { $0.id == id }) {
+            rideHistory[index] = rideHistory[index].with(weather: weather)
+            persistRideHistory()
+        }
+
+        if presentedRideSummary?.id == id,
+           let summary = presentedRideSummary {
+            presentedRideSummary = summary.with(weather: weather)
+        }
+    }
+
+    private func deleteRideSummary(_ id: UUID) {
+        rideHistory.removeAll { $0.id == id }
+        persistRideHistory()
+    }
+
+    private func persistRideHistory() {
+        guard let data = try? JSONEncoder().encode(rideHistory) else {
+            return
+        }
+
+        UserDefaults.standard.set(data, forKey: RideSummary.storageKey)
     }
 
     private var defaultRouteSaveName: String {
