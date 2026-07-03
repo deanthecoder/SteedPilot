@@ -259,7 +259,7 @@ private struct RideHistoryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: summary.weather?.symbolName ?? "figure.outdoor.cycle")
+            Image(systemName: summary.weather?.symbolName ?? "motorcycle.fill")
                 .font(.headline)
                 .foregroundStyle(.cyan)
                 .frame(width: 26)

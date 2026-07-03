@@ -50,6 +50,10 @@ struct ContentView: View {
     @State private var routeTrackingState = RouteTrackingState()
     @State private var lastReliableRideSnapshot: RideNavigationSnapshot?
     @State private var arrivalArmed = false
+    @State private var destinationStationarySince: Date?
+    @State private var pendingAutomaticRideCompletion = false
+    @State private var selectedSavedRouteName: String?
+    @State private var selectedSavedRouteWaypointSignature: String?
     @State private var selectedDebugInstructionID: String?
     @State private var routeAuditMessage: String?
     @State private var saveRouteName = ""
@@ -68,6 +72,8 @@ struct ContentView: View {
 
     private let fixtures = NavFixtures.loadFixtures()
     private let navigationDebugLogFileName = "SteedPilotNavigation.log"
+    private let navigationDebugLogMaximumBytes: UInt64 = 4 * 1_024 * 1_024
+    private let navigationDebugLogRetainedBytes: UInt64 = 2 * 1_024 * 1_024
     private let routeAuditFileName = "SteedPilotRouteAudit.md"
     private let replayRoute = NavFixtures.loadReplayRoute()
     private let rideUpdateTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
@@ -113,7 +119,11 @@ struct ContentView: View {
             .onReceive(locationProvider.$currentLocation.compactMap { $0 }) { location in
                 recordRideLocation(location)
             }
-            .onChange(of: routeWaypointSignature) { _, _ in
+            .onChange(of: routeWaypointSignature) { _, signature in
+                if selectedSavedRouteWaypointSignature != signature {
+                    selectedSavedRouteName = nil
+                    selectedSavedRouteWaypointSignature = nil
+                }
                 recalculateRoute()
             }
             .onChange(of: avoidMotorways) { _, _ in
@@ -1679,6 +1689,8 @@ struct ContentView: View {
         routeTrackingState = RouteTrackingState()
         lastReliableRideSnapshot = nil
         arrivalArmed = false
+        destinationStationarySince = nil
+        pendingAutomaticRideCompletion = false
         guard let payload = rideStartPayload() else {
             return
         }
@@ -1725,6 +1737,8 @@ struct ContentView: View {
         routeTrackingState = RouteTrackingState()
         lastReliableRideSnapshot = nil
         arrivalArmed = false
+        destinationStationarySince = nil
+        pendingAutomaticRideCompletion = false
         activeRideRecorder = nil
         UIApplication.shared.isIdleTimerDisabled = false
     }
@@ -1748,6 +1762,23 @@ struct ContentView: View {
         }
 
         sender.send(payload)
+        if pendingAutomaticRideCompletion {
+            pendingAutomaticRideCompletion = false
+            Task { @MainActor in
+                await Task.yield()
+                completeArrivedRide()
+            }
+        }
+    }
+
+    private func completeArrivedRide() {
+        guard routeActive else {
+            return
+        }
+
+        finishActiveRide()
+        stopActiveRoute(sendClear: false)
+        setPanelState(.medium)
     }
 
     private func pingDevice() {
@@ -1822,6 +1853,9 @@ struct ContentView: View {
             isOffRoute: snapshot.isOffRoute,
             routeCompletionPercent: snapshot.tripProgressComplete
         )
+        if snapshot.maneuver == .arrive, debugRideDistanceMeters == nil {
+            pendingAutomaticRideCompletion = true
+        }
         appendNavigationDebugLog(snapshot: snapshot, mode: "navigation")
 
         if snapshot.isOffRoute {
@@ -1866,6 +1900,9 @@ struct ContentView: View {
             isOffRoute: snapshot.isOffRoute,
             routeCompletionPercent: snapshot.tripProgressComplete
         )
+        if snapshot.maneuver == .arrive, debugRideDistanceMeters == nil {
+            pendingAutomaticRideCompletion = true
+        }
         appendNavigationDebugLog(snapshot: snapshot, mode: "destination")
 
         return makeNavStatePayload([
@@ -1944,10 +1981,37 @@ struct ContentView: View {
             handle.seekToEndOfFile()
             handle.write(data)
             handle.closeFile()
+            trimNavigationDebugLogIfNeeded(at: url)
             return
         }
 
         try? data.write(to: url, options: .atomic)
+    }
+
+    private func trimNavigationDebugLogIfNeeded(at url: URL) {
+        guard
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+            let fileSize = attributes[.size] as? NSNumber,
+            fileSize.uint64Value > navigationDebugLogMaximumBytes,
+            let handle = try? FileHandle(forReadingFrom: url)
+        else {
+            return
+        }
+
+        let retainedStart = fileSize.uint64Value - navigationDebugLogRetainedBytes
+        do {
+            try handle.seek(toOffset: retainedStart)
+            var retainedData = try handle.readToEnd() ?? Data()
+            try handle.close()
+
+            if let firstNewline = retainedData.firstIndex(of: 0x0A) {
+                retainedData.removeSubrange(...firstNewline)
+            }
+
+            try retainedData.write(to: url, options: .atomic)
+        } catch {
+            try? handle.close()
+        }
     }
 
     private var routeAuditURL: URL? {
@@ -2227,8 +2291,10 @@ struct ContentView: View {
             ), nil)
         }
 
+        let currentCoordinate = currentLocation.coordinate
+        let forceStationaryArrival = shouldForceStationaryArrival(at: currentLocation)
         let locationAge = max(-currentLocation.timestamp.timeIntervalSinceNow, 0)
-        if locationAge >= 1.5 {
+        if locationAge >= 1.5, !forceStationaryArrival {
             if let estimatedProgress = deadReckonedRouteProgress(
                 locationAge: locationAge,
                 speed: locationProvider.currentSpeedMetersPerSecond ?? 0,
@@ -2252,7 +2318,6 @@ struct ContentView: View {
             }
         }
 
-        let currentCoordinate = currentLocation.coordinate
         let tracking = trackedRouteProgress(for: currentLocation)
         if tracking.isReliableMatch {
             arrivalArmed = NavigationArrivalPolicy.isArmed(
@@ -2298,7 +2363,8 @@ struct ContentView: View {
             totalDistance: totalDistance,
             routeProgress: routeProgress,
             currentCoordinate: currentCoordinate,
-            progressWindow: progressWindow
+            progressWindow: progressWindow,
+            forceArrival: forceStationaryArrival
         )
         lastReliableRideSnapshot = result.snapshot
         return result
@@ -2308,7 +2374,7 @@ struct ContentView: View {
         rideNavigationSnapshot(totalDistance: totalDistance, routeProgress: routeProgress, currentCoordinate: currentCoordinate, progressWindow: nil).snapshot
     }
 
-    private func rideNavigationSnapshot(totalDistance: CLLocationDistance, routeProgress: RouteProgress, currentCoordinate: CLLocationCoordinate2D?, progressWindow: ManeuverProgressWindow?, allowArrival: Bool = true) -> (snapshot: RideNavigationSnapshot, progressWindow: ManeuverProgressWindow?) {
+    private func rideNavigationSnapshot(totalDistance: CLLocationDistance, routeProgress: RouteProgress, currentCoordinate: CLLocationCoordinate2D?, progressWindow: ManeuverProgressWindow?, allowArrival: Bool = true, forceArrival: Bool = false) -> (snapshot: RideNavigationSnapshot, progressWindow: ManeuverProgressWindow?) {
         let destinationBearing = currentCoordinate.map {
             relativeDestinationBearing(from: $0, routeProgress: routeProgress)
         } ?? relativeDestinationBearing(routeProgress: routeProgress)
@@ -2318,7 +2384,8 @@ struct ContentView: View {
             legs: navigationDecisionLegs,
             progressWindow: progressWindow,
             destinationDistance: currentCoordinate.map { distanceToDestination(from: $0) },
-            arrivalArmed: currentCoordinate == nil ? true : (arrivalArmed && allowArrival)
+            arrivalArmed: currentCoordinate == nil ? true : (arrivalArmed && allowArrival),
+            forceArrival: forceArrival && allowArrival
         )
         let decisionSnapshot = decisionResult.snapshot
         let instruction = routeInstruction(for: decisionSnapshot.selectedInstruction)
@@ -2744,6 +2811,21 @@ struct ContentView: View {
 
         return CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
             .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
+    }
+
+    private func shouldForceStationaryArrival(at location: CLLocation, now: Date = Date()) -> Bool {
+        destinationStationarySince = NavigationStationaryArrivalPolicy.stationarySince(
+            current: destinationStationarySince,
+            isArmed: arrivalArmed,
+            destinationDistance: distanceToDestination(from: location.coordinate),
+            speed: location.speed,
+            locationTimestamp: location.timestamp,
+            now: now
+        )
+        return NavigationStationaryArrivalPolicy.shouldForceArrival(
+            stationarySince: destinationStationarySince,
+            now: now
+        )
     }
 
     private func relativeDestinationBearingForOffRoute(from coordinate: CLLocationCoordinate2D, routeProgress: RouteProgress?) -> Int {
@@ -3373,6 +3455,8 @@ struct ContentView: View {
         savedRoutes.removeAll { $0.name.localizedCaseInsensitiveCompare(trimmedName) == .orderedSame }
         savedRoutes.insert(savedRoute, at: 0)
         persistSavedRoutes()
+        selectedSavedRouteName = savedRoute.name
+        selectedSavedRouteWaypointSignature = routeWaypointSignature
         saveRouteName = ""
     }
 
@@ -3382,6 +3466,8 @@ struct ContentView: View {
         let restoredWaypoints = route.routeWaypoints
         waypoints = restoredWaypoints
         normalizeRouteWaypoints()
+        selectedSavedRouteName = route.name
+        selectedSavedRouteWaypointSignature = routeWaypointSignature
         routeLegs = []
         selectedTarget = nil
         searchMessage = nil
@@ -3431,6 +3517,11 @@ struct ContentView: View {
     }
 
     private var activeRideName: String {
+        if let selectedSavedRouteName,
+           selectedSavedRouteWaypointSignature == routeWaypointSignature {
+            return selectedSavedRouteName
+        }
+
         guard let start = waypoints.first?.name,
               let destination = waypoints.last?.name else {
             return "Ride"
@@ -3460,12 +3551,20 @@ struct ContentView: View {
 
         let recorderID = recorder.id
         Task {
-            let weather = await RideWeatherClient.currentWeather(at: location)
+            let result = await RideWeatherClient.currentWeather(at: location)
             guard activeRideRecorder?.id == recorderID else {
                 return
             }
 
-            activeRideRecorder?.weather = weather
+            switch result {
+            case let .success(weather, attempts):
+                activeRideRecorder?.weather = weather
+                appendWeatherDebugLog("success | source=ride-start | attempts=\(attempts)")
+            case let .failure(message, attempts):
+                appendWeatherDebugLog(
+                    "failure | source=ride-start | attempts=\(attempts) | error='\(message)'"
+                )
+            }
         }
     }
 
@@ -3485,12 +3584,33 @@ struct ContentView: View {
         }
 
         Task {
-            guard let weather = await RideWeatherClient.currentWeather(at: location) else {
-                return
+            let result = await RideWeatherClient.currentWeather(at: location)
+            switch result {
+            case let .success(weather, attempts):
+                applyWeather(weather, toRide: summary.id)
+                appendWeatherDebugLog("success | source=ride-finish | attempts=\(attempts)")
+            case let .failure(message, attempts):
+                appendWeatherDebugLog(
+                    "failure | source=ride-finish | attempts=\(attempts) | error='\(message)'"
+                )
             }
-
-            applyWeather(weather, toRide: summary.id)
         }
+    }
+
+    private func appendWeatherDebugLog(_ message: String) {
+        let entry = [
+            Date.now.formatted(date: .omitted, time: .standard),
+            "mode=weather",
+            message
+        ].joined(separator: " | ")
+
+        navigationDebugLog.append(entry)
+        if navigationDebugLog.count > 80 {
+            navigationDebugLog.removeFirst(navigationDebugLog.count - 80)
+        }
+
+        writeNavigationDebugLogEntry(entry)
+        NSLog("SteedPilotWeather %@", entry)
     }
 
     private func loadRideHistory() {

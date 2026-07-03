@@ -163,6 +163,63 @@ private struct NavigationTests {
             try assertTrue(armedAwayFromHome, "Moving beyond the departure radius should arm arrival")
             try assertTrue(remainsArmedOnReturn, "Arrival should remain armed when returning home")
         },
+        TestCase(name: "Stationary destination fallback still requires arming") {
+            try assertTrue(
+                NavigationArrivalPolicy.shouldArrive(
+                    remainingRouteDistance: 500,
+                    destinationDistance: 70,
+                    isArmed: true,
+                    forceArrival: true
+                ),
+                "An armed stationary fallback should finish despite uncertain route progress"
+            )
+            try assertTrue(
+                !NavigationArrivalPolicy.shouldArrive(
+                    remainingRouteDistance: 0,
+                    destinationDistance: 0,
+                    isArmed: false,
+                    forceArrival: true
+                ),
+                "A forced arrival must not finish an unarmed circular route at its start"
+            )
+        },
+        TestCase(name: "Stationary destination fallback waits twenty seconds") {
+            let now = Date()
+            let started = NavigationStationaryArrivalPolicy.stationarySince(
+                current: nil,
+                isArmed: true,
+                destinationDistance: 70,
+                speed: 0,
+                locationTimestamp: now,
+                now: now
+            )
+            try assertTrue(
+                !NavigationStationaryArrivalPolicy.shouldForceArrival(
+                    stationarySince: started,
+                    now: now.addingTimeInterval(19)
+                ),
+                "Nineteen stationary seconds should not finish"
+            )
+            try assertTrue(
+                NavigationStationaryArrivalPolicy.shouldForceArrival(
+                    stationarySince: started,
+                    now: now.addingTimeInterval(20)
+                ),
+                "Twenty stationary seconds inside 80m should finish"
+            )
+        },
+        TestCase(name: "Stationary destination fallback rejects fresh movement") {
+            let now = Date()
+            let stationarySince = NavigationStationaryArrivalPolicy.stationarySince(
+                current: nil,
+                isArmed: true,
+                destinationDistance: 70,
+                speed: 5,
+                locationTimestamp: now,
+                now: now
+            )
+            try assertTrue(stationarySince == nil, "Fresh moving GPS must not start the stationary arrival timer")
+        },
         TestCase(name: "Dead reckoning advances briefly along the route") {
             let estimated = NavigationDeadReckoning.estimatedProgress(
                 from: 1_000,

@@ -196,27 +196,55 @@ final class RideSessionRecorder {
 }
 
 enum RideWeatherClient {
-    static func currentWeather(at location: CLLocation) async -> RideWeatherSnapshot? {
-        do {
-            async let weatherRequest = WeatherService.shared.weather(for: location, including: .current)
-            async let attributionRequest = WeatherService.shared.attribution
-            let (weather, attribution) = try await (weatherRequest, attributionRequest)
+    enum Result {
+        case success(RideWeatherSnapshot, attempts: Int)
+        case failure(message: String, attempts: Int)
+    }
 
-            return RideWeatherSnapshot(
-                observedAt: weather.date,
-                condition: weather.condition.description,
-                symbolName: weather.symbolName,
-                temperatureCelsius: weather.temperature.converted(to: .celsius).value,
-                apparentTemperatureCelsius: weather.apparentTemperature.converted(to: .celsius).value,
-                windKilometresPerHour: weather.wind.speed.converted(to: .kilometersPerHour).value,
-                windGustKilometresPerHour: weather.wind.gust?.converted(to: .kilometersPerHour).value,
-                precipitationMillimetresPerHour: weather.precipitationIntensity.converted(to: .kilometersPerHour).value * 1_000_000,
-                attributionServiceName: attribution.serviceName,
-                attributionMarkURL: attribution.combinedMarkDarkURL,
-                attributionLegalURL: attribution.legalPageURL
-            )
-        } catch {
-            return nil
+    static func currentWeather(
+        at location: CLLocation,
+        maximumAttempts: Int = 3
+    ) async -> Result {
+        let attemptLimit = max(maximumAttempts, 1)
+        var lastFailure = "Unknown WeatherKit error"
+
+        for attempt in 1...attemptLimit {
+            do {
+                let weather = try await WeatherService.shared.weather(for: location, including: .current)
+
+                do {
+                    let attribution = try await WeatherService.shared.attribution
+                    return .success(
+                        RideWeatherSnapshot(
+                            observedAt: weather.date,
+                            condition: weather.condition.description,
+                            symbolName: weather.symbolName,
+                            temperatureCelsius: weather.temperature.converted(to: .celsius).value,
+                            apparentTemperatureCelsius: weather.apparentTemperature.converted(to: .celsius).value,
+                            windKilometresPerHour: weather.wind.speed.converted(to: .kilometersPerHour).value,
+                            windGustKilometresPerHour: weather.wind.gust?.converted(to: .kilometersPerHour).value,
+                            precipitationMillimetresPerHour: weather.precipitationIntensity.converted(to: .kilometersPerHour).value * 1_000_000,
+                            attributionServiceName: attribution.serviceName,
+                            attributionMarkURL: attribution.combinedMarkDarkURL,
+                            attributionLegalURL: attribution.legalPageURL
+                        ),
+                        attempts: attempt
+                    )
+                } catch {
+                    lastFailure = "attribution: \(String(reflecting: error))"
+                }
+            } catch {
+                lastFailure = "current weather: \(String(reflecting: error))"
+            }
+
+            guard attempt < attemptLimit else {
+                break
+            }
+
+            let retryDelay = attempt == 1 ? 2 : 8
+            try? await Task.sleep(for: .seconds(retryDelay))
         }
+
+        return .failure(message: lastFailure, attempts: attemptLimit)
     }
 }
