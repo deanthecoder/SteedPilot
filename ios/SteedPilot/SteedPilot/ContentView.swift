@@ -3178,6 +3178,7 @@ struct ContentView: View {
                     expectedTravelTime: route.expectedTravelTime,
                     polyline: route.polyline,
                     steps: route.steps,
+                    incomingPolyline: legs.last?.polyline,
                     isFirstLeg: index == 1,
                     isFinalLeg: index == routePoints.count - 1
                 )
@@ -4099,19 +4100,28 @@ private struct RouteLeg: Identifiable {
     let instructions: [RouteInstruction]
     let debugSteps: [RouteDebugStep]
 
-    init(fromWaypointID: UUID, toWaypointID: UUID, distance: CLLocationDistance, expectedTravelTime: TimeInterval, polyline: MKPolyline, steps: [MKRoute.Step], isFirstLeg: Bool, isFinalLeg: Bool) {
+    init(fromWaypointID: UUID, toWaypointID: UUID, distance: CLLocationDistance, expectedTravelTime: TimeInterval, polyline: MKPolyline, steps: [MKRoute.Step], incomingPolyline: MKPolyline?, isFirstLeg: Bool, isFinalLeg: Bool) {
         self.fromWaypointID = fromWaypointID
         self.toWaypointID = toWaypointID
         self.distance = distance
         self.expectedTravelTime = expectedTravelTime
         self.polyline = polyline
-        self.debugSteps = NavigationRouteBuilder.steps(
+        var routeSteps = NavigationRouteBuilder.steps(
             polyline: polyline,
             routeDistance: polyline.steedPilotRouteDistance,
             mapKitSteps: steps,
             isFirstLeg: isFirstLeg,
             isFinalLeg: isFinalLeg
-        ).map(RouteDebugStep.init)
+        )
+        if let transition = NavigationRouteBuilder.waypointTransitionStep(
+            incomingPolyline: incomingPolyline,
+            outgoingPolyline: polyline,
+            existingSteps: routeSteps
+        ) {
+            routeSteps.append(transition)
+            routeSteps.sort { $0.distanceFromLegStart < $1.distanceFromLegStart }
+        }
+        self.debugSteps = routeSteps.map(RouteDebugStep.init)
         self.instructions = debugSteps.compactMap(RouteInstruction.init)
     }
 }

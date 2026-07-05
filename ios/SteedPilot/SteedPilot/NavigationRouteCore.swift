@@ -112,7 +112,12 @@ enum NavigationRouteBuilder {
                     incomingBearing: incomingBearing
                 )
                 : RoundaboutExitAngleDiagnostic(targetAngle: nil, outgoingBearing: nil)
-            let outgoingBearing = exitAngleDiagnostic.outgoingBearing ?? coarseOutgoingBearing
+            let outgoingBearing = roundaboutExit == 1
+                ? preferredRoundaboutOutgoingBearing(
+                    coarseOutgoingBearing: coarseOutgoingBearing,
+                    earlyRoundaboutBearing: exitAngleDiagnostic.outgoingBearing
+                )
+                : coarseOutgoingBearing
             let sourceManeuver = NavigationDecisionManeuver(instruction: step.instructions)
             let inferredManeuver = inferredManeuver(
                 sourceManeuver,
@@ -122,7 +127,12 @@ enum NavigationRouteBuilder {
             )
             let roundaboutAngles = roundaboutExitAngles(
                 exit: roundaboutExit,
-                targetAngle: exitAngleDiagnostic.targetAngle,
+                targetAngle: roundaboutExit == 1
+                    ? roundaboutDisplayAngle(
+                        incomingBearing: incomingBearing,
+                        outgoingBearing: outgoingBearing
+                    )
+                    : exitAngleDiagnostic.targetAngle,
                 incomingBearing: incomingBearing,
                 outgoingBearing: outgoingBearing
             )
@@ -242,6 +252,68 @@ enum NavigationRouteBuilder {
         }
 
         return normalizedSignedAngle(angle)
+    }
+
+    static func preferredRoundaboutOutgoingBearing(
+        coarseOutgoingBearing: Int?,
+        earlyRoundaboutBearing: Int?
+    ) -> Int? {
+        coarseOutgoingBearing ?? earlyRoundaboutBearing
+    }
+
+    static func waypointTransitionStep(
+        incomingPolyline: MKPolyline?,
+        outgoingPolyline: MKPolyline,
+        existingSteps: [NavigationRouteStep]
+    ) -> NavigationRouteStep? {
+        guard let incomingPolyline else {
+            return nil
+        }
+
+        let nearbyManeuverExists = existingSteps.contains {
+            $0.deviceManeuver?.isMeaningfulDirection == true
+                && $0.deviceManeuver != .arrive
+                && $0.targetDistanceFromLegStart <= 100
+        }
+        guard !nearbyManeuverExists else {
+            return nil
+        }
+
+        let incomingSampleDistance = max(incomingPolyline.steedPilotRouteDistance - 40, 0)
+        let incomingBearing = incomingPolyline.steedPilotBearing(atDistance: incomingSampleDistance)
+            ?? incomingPolyline.steedPilotLastSegmentBearingDegrees
+        let outgoingBearing = outgoingPolyline.steedPilotBearing(atDistance: 40)
+            ?? outgoingPolyline.steedPilotFirstSegmentBearingDegrees
+        guard let angle = relativeAngle(
+            incomingBearing: incomingBearing,
+            outgoingBearing: outgoingBearing
+        ), abs(angle) >= 35 else {
+            return nil
+        }
+
+        let maneuver = signedTurnManeuver(forAngle: angle)
+        guard maneuver.isMeaningfulDirection else {
+            return nil
+        }
+
+        return NavigationRouteStep(
+            distanceFromLegStart: 0,
+            targetDistanceFromLegStart: 0,
+            distance: 1,
+            rawInstruction: turnInstructionText(for: maneuver),
+            rawNotice: "Generated from the route direction across an intermediate waypoint",
+            sourceManeuver: maneuver,
+            deviceManeuver: maneuver,
+            incomingBearing: incomingBearing,
+            outgoingBearing: outgoingBearing,
+            mapKitRoundaboutExit: nil,
+            mapKitRoundaboutExitAngles: [],
+            deviceRoundaboutExit: nil,
+            deviceRoundaboutExitAngles: [],
+            roundaboutApproachDeviationOffset: nil,
+            roundaboutApproachProbes: [],
+            skipReason: nil
+        )
     }
 
     private static func inferredManeuver(_ maneuver: NavigationDecisionManeuver, instruction: String, incomingBearing: Int?, outgoingBearing: Int?) -> NavigationDecisionManeuver {
