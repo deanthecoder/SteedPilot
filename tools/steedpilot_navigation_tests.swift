@@ -220,6 +220,33 @@ private struct NavigationTests {
             )
             try assertTrue(stationarySince == nil, "Fresh moving GPS must not start the stationary arrival timer")
         },
+        TestCase(name: "Off-route heading targets the active leg destination") {
+            try assertEqual(
+                NavigationOffRouteGuidance.nextWaypointIndex(
+                    activeLegDestinationIndex: 3,
+                    waypointCount: 5
+                ),
+                3,
+                "Heading guidance should target the next unvisited waypoint rather than the final destination"
+            )
+        },
+        TestCase(name: "Off-route heading safely falls back to the first waypoint") {
+            try assertEqual(
+                NavigationOffRouteGuidance.nextWaypointIndex(
+                    activeLegDestinationIndex: nil,
+                    waypointCount: 5
+                ),
+                1,
+                "Unknown progress should point toward the first waypoint after the start"
+            )
+            try assertTrue(
+                NavigationOffRouteGuidance.nextWaypointIndex(
+                    activeLegDestinationIndex: nil,
+                    waypointCount: 1
+                ) == nil,
+                "A route without a destination has no heading target"
+            )
+        },
         TestCase(name: "Dead reckoning advances briefly along the route") {
             let estimated = NavigationDeadReckoning.estimatedProgress(
                 from: 1_000,

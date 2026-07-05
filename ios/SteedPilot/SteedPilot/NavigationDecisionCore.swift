@@ -248,6 +248,24 @@ enum NavigationStationaryArrivalPolicy {
     }
 }
 
+enum NavigationOffRouteGuidance {
+    static func nextWaypointIndex(
+        activeLegDestinationIndex: Int?,
+        waypointCount: Int
+    ) -> Int? {
+        guard waypointCount > 1 else {
+            return nil
+        }
+
+        guard let activeLegDestinationIndex,
+              (1..<waypointCount).contains(activeLegDestinationIndex) else {
+            return 1
+        }
+
+        return activeLegDestinationIndex
+    }
+}
+
 enum NavigationDeadReckoning {
     static let maximumDuration: TimeInterval = 8
 

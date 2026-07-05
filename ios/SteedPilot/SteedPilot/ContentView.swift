@@ -2417,9 +2417,18 @@ struct ContentView: View {
 
     private func offRouteSnapshot(totalDistance: CLLocationDistance, currentCoordinate: CLLocationCoordinate2D, routeProgress: RouteProgress?, reason: String) -> RideNavigationSnapshot {
         let routeProgressMeters = routeProgress?.distanceFromRouteStart ?? nearestCurrentRouteDistance() ?? 0
-        let remainingDistance = distanceToDestination(from: currentCoordinate)
+        let guidanceTarget = offRouteGuidanceTarget(for: routeProgress)
+        let targetCoordinate = guidanceTarget?.coordinate ?? waypoints.last?.coordinate
+        let remainingDistance = targetCoordinate.map {
+            CLLocation(latitude: currentCoordinate.latitude, longitude: currentCoordinate.longitude)
+                .distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
+        } ?? distanceToDestination(from: currentCoordinate)
         let tripProgress = totalDistance > 0 ? Int(((routeProgressMeters / totalDistance) * 100).rounded()) : 0
-        let destinationBearing = relativeDestinationBearingForOffRoute(from: currentCoordinate, routeProgress: routeProgress)
+        let destinationBearing = relativeBearingForOffRoute(
+            from: currentCoordinate,
+            toward: targetCoordinate,
+            routeProgress: routeProgress
+        )
 
         return RideNavigationSnapshot(
             distanceToDestinationMeters: Int(max(remainingDistance, 0).rounded()),
@@ -2432,7 +2441,7 @@ struct ContentView: View {
             roundaboutExitAngles: [],
             selectedInstruction: nil,
             selectedInstructionCoordinate: nil,
-            selectedInstructionText: "Off route",
+            selectedInstructionText: guidanceTarget.map { "Off route: heading to \($0.name)" } ?? "Off route",
             selectedInstructionOffsetMeters: nil,
             selectedInstructionEndMeters: nil,
             selectedInstructionTargetOffsetMeters: nil,
@@ -2441,6 +2450,20 @@ struct ContentView: View {
             isOffRoute: true,
             selectionReason: reason
         )
+    }
+
+    private func offRouteGuidanceTarget(for routeProgress: RouteProgress?) -> RouteWaypoint? {
+        let activeLegDestinationIndex = routeProgress
+            .flatMap { progress in routeLegs.first(where: { $0.id == progress.legID }) }
+            .flatMap { leg in waypoints.firstIndex(where: { $0.id == leg.toWaypointID }) }
+        guard let waypointIndex = NavigationOffRouteGuidance.nextWaypointIndex(
+            activeLegDestinationIndex: activeLegDestinationIndex,
+            waypointCount: waypoints.count
+        ) else {
+            return nil
+        }
+
+        return waypoints[waypointIndex]
     }
 
     private func simulatedRouteProgress(at distance: CLLocationDistance) -> RouteProgress? {
@@ -2617,7 +2640,12 @@ struct ContentView: View {
             routeTrackingState.status = gap.map {
                 "Off route: \(formatDebugDistance($0)) from plausible route position"
             } ?? "Off route: no route projection"
-            return RouteTrackingResolution(progress: globalCandidate, isOffRoute: true, isReliableMatch: false, reason: routeTrackingState.status)
+            return RouteTrackingResolution(
+                progress: routeTrackingState.acceptedProgress ?? globalCandidate,
+                isOffRoute: true,
+                isReliableMatch: false,
+                reason: routeTrackingState.status
+            )
         }
 
         routeTrackingState.status = "Holding route through uncertain GPS fix \(routeTrackingState.consecutiveOffRouteFixes)/3"
@@ -2828,10 +2856,14 @@ struct ContentView: View {
         )
     }
 
-    private func relativeDestinationBearingForOffRoute(from coordinate: CLLocationCoordinate2D, routeProgress: RouteProgress?) -> Int {
-        let destinationBearing = Double(destinationBearing(from: coordinate))
-        let riderBearing = locationProvider.currentCourseDegrees ?? routeProgress?.routeBearingDegrees ?? destinationBearing
-        let relativeBearing = normalizedBearing(destinationBearing - riderBearing)
+    private func relativeBearingForOffRoute(
+        from coordinate: CLLocationCoordinate2D,
+        toward target: CLLocationCoordinate2D?,
+        routeProgress: RouteProgress?
+    ) -> Int {
+        let targetBearing = Double(target.map { coordinate.bearingDegrees(to: $0) } ?? destinationBearing(from: coordinate))
+        let riderBearing = locationProvider.currentCourseDegrees ?? routeProgress?.routeBearingDegrees ?? targetBearing
+        let relativeBearing = normalizedBearing(targetBearing - riderBearing)
         let smoothedBearing = smoothedBearing(from: smoothedDestinationBearing, to: relativeBearing, alpha: 0.35)
         smoothedDestinationBearing = smoothedBearing
 
