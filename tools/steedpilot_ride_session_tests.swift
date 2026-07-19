@@ -43,12 +43,20 @@ private struct RideSessionTests {
         try assert(summary.deadReckonedDuration == 8, "Dead reckoning should be capped at eight seconds per gap")
         try assert(summary.offRouteEventCount == 1, "One continuous off-route episode should count once")
         try assert(summary.routeCompletionPercent == 65, "Completion should retain the highest observed progress")
+        try assert(
+            summary.completionNotificationBody(usesMiles: true) == "0.0 miles • 0m",
+            "Mile notifications should contain the recorded distance and elapsed time"
+        )
+        try assert(
+            summary.completionNotificationBody(usesMiles: false) == "0.1 km • 0m",
+            "Kilometre notifications should contain the recorded distance and elapsed time"
+        )
 
         let encoded = try JSONEncoder().encode([summary])
         let decoded = try JSONDecoder().decode([RideSummary].self, from: encoded)
         try assert(decoded == [summary], "Ride summaries should round-trip through persistent storage")
 
-        print("8 ride session tests passed.")
+        print("10 ride session tests passed.")
     }
 
     private static func location(longitude: CLLocationDegrees, speed: CLLocationSpeed, timestamp: Date) -> CLLocation {

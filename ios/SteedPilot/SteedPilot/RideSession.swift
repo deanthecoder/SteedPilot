@@ -57,6 +57,24 @@ struct RideSummary: Codable, Equatable, Identifiable {
         movingTime > 0 ? distanceMeters / movingTime : 0
     }
 
+    func completionNotificationBody(usesMiles: Bool) -> String {
+        let distance: String
+        if usesMiles {
+            distance = String(format: "%.1f miles", distanceMeters / 1_609.344)
+        } else {
+            distance = String(format: "%.1f km", distanceMeters / 1_000)
+        }
+
+        let elapsedMinutes = max(Int((elapsedTime / 60).rounded()), 0)
+        let hours = elapsedMinutes / 60
+        let minutes = elapsedMinutes % 60
+        let duration = hours > 0
+            ? (minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h")
+            : "\(minutes)m"
+
+        return "\(distance) • \(duration)"
+    }
+
     func with(weather: RideWeatherSnapshot) -> RideSummary {
         RideSummary(
             id: id,
