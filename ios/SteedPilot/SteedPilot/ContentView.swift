@@ -1704,6 +1704,7 @@ struct ContentView: View {
             name: activeRideName,
             plannedDistanceMeters: totalRouteDistance
         )
+        RideCompletionNotifier.prepare()
         if let location = locationProvider.currentLocation {
             recordRideLocation(location)
         }
@@ -1719,7 +1720,7 @@ struct ContentView: View {
     }
 
     private func endRoute() {
-        finishActiveRide()
+        _ = finishActiveRide()
         stopActiveRoute(sendClear: true)
         setPanelState(.medium)
     }
@@ -1776,7 +1777,12 @@ struct ContentView: View {
             return
         }
 
-        finishActiveRide()
+        if let summary = finishActiveRide() {
+            RideCompletionNotifier.notify(
+                summary: summary,
+                usesMiles: distanceUnitPreference == .miles
+            )
+        }
         stopActiveRoute(sendClear: false)
         setPanelState(.medium)
     }
@@ -3601,9 +3607,9 @@ struct ContentView: View {
         }
     }
 
-    private func finishActiveRide() {
+    private func finishActiveRide() -> RideSummary? {
         guard let recorder = activeRideRecorder else {
-            return
+            return nil
         }
 
         let summary = recorder.finish()
@@ -3611,23 +3617,23 @@ struct ContentView: View {
         saveRideSummary(summary)
         presentedRideSummary = summary
 
-        guard summary.weather == nil,
-              let location = locationProvider.currentLocation else {
-            return
-        }
-
-        Task {
-            let result = await RideWeatherClient.currentWeather(at: location)
-            switch result {
-            case let .success(weather, attempts):
-                applyWeather(weather, toRide: summary.id)
-                appendWeatherDebugLog("success | source=ride-finish | attempts=\(attempts)")
-            case let .failure(message, attempts):
-                appendWeatherDebugLog(
-                    "failure | source=ride-finish | attempts=\(attempts) | error='\(message)'"
-                )
+        if summary.weather == nil,
+           let location = locationProvider.currentLocation {
+            Task {
+                let result = await RideWeatherClient.currentWeather(at: location)
+                switch result {
+                case let .success(weather, attempts):
+                    applyWeather(weather, toRide: summary.id)
+                    appendWeatherDebugLog("success | source=ride-finish | attempts=\(attempts)")
+                case let .failure(message, attempts):
+                    appendWeatherDebugLog(
+                        "failure | source=ride-finish | attempts=\(attempts) | error='\(message)'"
+                    )
+                }
             }
         }
+
+        return summary
     }
 
     private func appendWeatherDebugLog(_ message: String) {

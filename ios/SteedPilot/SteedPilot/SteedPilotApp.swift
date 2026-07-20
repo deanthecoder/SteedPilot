@@ -12,6 +12,8 @@ import SwiftUI
 
 @main
 struct SteedPilotApp: App {
+    @UIApplicationDelegateAdaptor(SteedPilotAppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             ContentView()
