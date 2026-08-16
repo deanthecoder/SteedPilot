@@ -39,9 +39,9 @@ private struct NavigationTests {
     ]
 
     private static let tests: [TestCase] = [
-        TestCase(name: "MapKit instructions target the start of the step") {
-            let routeInstruction = makeInstruction(index: 0, start: 0, distance: 520.7, raw: "Turn left onto Ermine Street North", maneuver: .turnLeft)
-            try assertApprox(routeInstruction.targetDistanceFromLegStart, 0, "MapKit instructions must count down to the step start")
+        TestCase(name: "MapKit instructions target the end of the step") {
+            let routeInstruction = makeInstruction(index: 0, start: 0, target: 520.7, distance: 520.7, raw: "Turn left onto Ermine Street North", maneuver: .turnLeft)
+            try assertApprox(routeInstruction.targetDistanceFromLegStart, 520.7, "MapKit instructions must count down to the step end")
         },
         TestCase(name: "Synthetic bends target the detected bend start") {
             let routeInstruction = makeInstruction(index: 0, start: 230, distance: 20, raw: "Synthetic bend left", maneuver: .bendLeft)

@@ -102,6 +102,7 @@ private struct RoutePlanTests {
             destination: "CB23 3RJ, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
+                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.arrive, textContains: "Arrive")
             ]
         ),
@@ -111,7 +112,7 @@ private struct RoutePlanTests {
             destination: "PE19 6TW, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.sharpRight, textContains: "Sharp right"),
+                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.roundabout, textContains: "exit 1", angleRange: -125 ... -95),
                 ExpectedStage(.roundabout, textContains: "exit 2", angleRange: 80 ... 115),
                 ExpectedStage(.arrive, textContains: "Arrive")
@@ -123,13 +124,13 @@ private struct RoutePlanTests {
             destination: "Franks Farm, CB23 4EY, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.sharpRight, textContains: "Sharp right"),
-                ExpectedStage(.roundabout, textContains: "exit 3", angleRange: 80 ... 115),
                 ExpectedStage(.turnRight, textContains: "Right"),
+                ExpectedStage(.roundabout, textContains: "exit 3", angleRange: 80 ... 115),
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.bendRight, textContains: "Bend right"),
+                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.arrive, textContains: "Arrive")
             ]
@@ -141,9 +142,8 @@ private struct RoutePlanTests {
             avoidMotorways: true,
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.sharpRight, textContains: "Sharp right"),
-                ExpectedStage(.roundabout, textContains: "exit 3"),
                 ExpectedStage(.turnRight, textContains: "Right"),
+                ExpectedStage(.roundabout, textContains: "exit 3"),
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
                 ExpectedStage(.turnRight, textContains: "Right"),
@@ -154,6 +154,7 @@ private struct RoutePlanTests {
                 ExpectedStage(.roundabout, textContains: "exit 1"),
                 ExpectedStage(.roundabout, textContains: "exit 3"),
                 ExpectedStage(.roundabout, textContains: "exit 1"),
+                ExpectedStage(.bendLeft, textContains: "Bend left"),
                 ExpectedStage(.arrive, textContains: "Arrive")
             ]
         )
@@ -192,6 +193,14 @@ private struct RoutePlanTests {
         } catch {
             failures.append(String(describing: error))
             print("FAIL geometry correction: \(error)")
+        }
+
+        do {
+            try await validateSavedTestRouteManeuverAlignment()
+            print("PASS saved Test route maneuver alignment")
+        } catch {
+            failures.append(String(describing: error))
+            print("FAIL saved Test route maneuver alignment: \(error)")
         }
         print("")
 
@@ -400,7 +409,9 @@ private struct RoutePlanTests {
         let instruction = "At the roundabout, continue onto Ermine Street"
         try assertEqual(NavigationRouteBuilder.roundaboutExit(from: instruction), 2, "A straight-ahead roundabout should infer the second exit")
         try assertEqual(NavigationRouteBuilder.roundaboutExit(from: "At the roundabout, turn left"), 1, "A leftward UK roundabout should infer the first exit")
+        try assertEqual(NavigationRouteBuilder.roundaboutExit(from: "At the roundabout, bear left"), 1, "A left-bearing UK roundabout should infer the first exit")
         try assertEqual(NavigationRouteBuilder.roundaboutExit(from: "At the roundabout, turn right"), 3, "A rightward UK roundabout should infer the third exit")
+        try assertEqual(NavigationRouteBuilder.roundaboutExit(from: "At the roundabout, bear right"), 3, "A right-bearing UK roundabout should infer the third exit")
     }
 
     private static func validateGeometryCorrection() throws {
@@ -417,6 +428,68 @@ private struct RoutePlanTests {
             outgoingBearing: 140
         )
         try assertEqual(retained, .turnRight, "A modest geometry disagreement should retain MapKit's maneuver")
+    }
+
+    private static func validateSavedTestRouteManeuverAlignment() async throws {
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: 52.29613270907337, longitude: -0.2063601783835179)))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: 52.226071883441215, longitude: -0.17885250662860092)))
+        request.transportType = .automobile
+
+        guard let route = try await MKDirections(request: request).calculate().routes.first else {
+            throw RoutePlanFailure.routeFailed("saved Test route leg")
+        }
+
+        let steps = NavigationRouteBuilder.steps(
+            polyline: route.polyline,
+            routeDistance: route.polyline.steedPilotRouteDistance,
+            mapKitSteps: route.steps,
+            isFirstLeg: false,
+            isFinalLeg: true
+        )
+        guard let graveley = steps.first(where: { $0.rawInstruction.localizedCaseInsensitiveContains("Graveley Road") }),
+              let toseland = steps.first(where: { $0.rawInstruction.localizedCaseInsensitiveContains("Toseland Road") }) else {
+            throw RoutePlanFailure.failed("Saved Test route did not return the expected Graveley and Toseland steps")
+        }
+
+        try assertEqual(graveley.deviceManeuver, .roundabout, "The 9.5-mile maneuver should be the Graveley Road roundabout")
+        guard graveley.targetDistanceFromLegStart > 1_600,
+              toseland.targetDistanceFromLegStart > 5_400,
+              graveley.targetDistanceFromLegStart < toseland.targetDistanceFromLegStart else {
+            throw RoutePlanFailure.failed("MapKit step instructions must target the ends of their step polylines")
+        }
+
+        let legID = UUID()
+        let instructions = steps.enumerated().compactMap { index, step -> NavigationDecisionInstruction? in
+            guard let maneuver = step.deviceManeuver else {
+                return nil
+            }
+            return NavigationDecisionInstruction(
+                legID: legID,
+                index: index,
+                distanceFromLegStart: step.distanceFromLegStart,
+                targetDistanceFromLegStart: step.targetDistanceFromLegStart,
+                distance: step.distance,
+                rawInstruction: step.rawInstruction,
+                maneuver: maneuver,
+                roundaboutExit: step.deviceRoundaboutExit
+            )
+        }
+        let decision = NavigationDecisionEngine.snapshot(
+            totalDistance: route.distance,
+            routeProgress: NavigationDecisionRouteProgress(
+                legID: legID,
+                distanceFromLegStart: 1_500,
+                distanceFromRouteStart: 1_500,
+                legDistance: route.distance
+            ),
+            legs: [NavigationDecisionLeg(id: legID, distance: route.distance, instructions: instructions)],
+            progressWindow: nil
+        ).snapshot
+        try assertEqual(decision.maneuver, .roundabout, "The replay before 9.5 miles should announce the Graveley Road roundabout")
+        guard decision.selectedInstruction?.rawInstruction.localizedCaseInsensitiveContains("Graveley Road") == true else {
+            throw RoutePlanFailure.failed("The replay selected Toseland Road before the Graveley Road roundabout")
+        }
     }
 
     private static func makeRoundaboutStep(start: CLLocationDistance, distance: CLLocationDistance, angle: Int) -> NavigationRouteStep {

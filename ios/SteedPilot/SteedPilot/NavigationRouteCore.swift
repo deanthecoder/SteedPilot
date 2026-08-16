@@ -67,7 +67,7 @@ enum NavigationRouteBuilder {
             suppressStartBoundary: !isFirstLeg,
             suppressEndBoundary: !isFinalLeg
         )
-        return (mapKitDebugSteps + syntheticBends).sorted { $0.distanceFromLegStart < $1.distanceFromLegStart }
+        return (mapKitDebugSteps + syntheticBends).sorted { $0.targetDistanceFromLegStart < $1.targetDistanceFromLegStart }
     }
 
     static func syntheticBendDiagnostics(polyline: MKPolyline, routeDistance: CLLocationDistance, mapKitSteps: [MKRoute.Step], isFirstLeg: Bool, isFinalLeg: Bool) -> [NavigationSyntheticBendDiagnostic] {
@@ -85,24 +85,27 @@ enum NavigationRouteBuilder {
         let steps = mapKitSteps.enumerated().flatMap { index, step -> [NavigationRouteStep] in
             let roundaboutExit = roundaboutExit(from: step.instructions)
             let maneuverStartDistance = distanceFromLegStart
-            let maneuverGeometryDistance = roundaboutExit == nil ? maneuverStartDistance : maneuverStartDistance + step.distance
+            // An MKRoute.Step describes the road segment leading to its instruction.
+            // The maneuver is therefore at the end of the step, not its start.
+            let maneuverGeometryDistance = maneuverStartDistance + step.distance
             let approach = roundaboutApproachBearingDiagnostic(
                 exit: roundaboutExit,
                 legPolyline: polyline,
                 maneuverDistance: maneuverGeometryDistance,
                 previousStep: index > 0 ? mapKitSteps[index - 1] : nil
             )
-            let targetDistance = roundaboutTargetDistance(
-                exit: roundaboutExit,
-                stepStartDistance: maneuverStartDistance,
-                geometryDistance: maneuverGeometryDistance,
-                approachDeviationOffset: approach.deviationOffset
-            )
+            let targetDistance = roundaboutExit == nil
+                ? maneuverGeometryDistance
+                : roundaboutTargetDistance(
+                    exit: roundaboutExit,
+                    stepStartDistance: maneuverStartDistance,
+                    geometryDistance: maneuverGeometryDistance,
+                    approachDeviationOffset: approach.deviationOffset
+                )
             let stepStartIncomingBearing = polyline.steedPilotBearing(atDistance: maneuverStartDistance - 50) ?? (index > 0 ? mapKitSteps[index - 1].polyline.steedPilotLastSegmentBearingDegrees : nil)
             let stepStartOutgoingBearing = polyline.steedPilotBearing(atDistance: maneuverStartDistance + 50) ?? step.polyline.steedPilotFirstSegmentBearingDegrees
-            let incomingBearing = roundaboutExit == nil
-                ? stepStartIncomingBearing
-                : approach.bearing
+            let maneuverIncomingBearing = polyline.steedPilotBearing(atDistance: maneuverGeometryDistance - 50) ?? step.polyline.steedPilotLastSegmentBearingDegrees
+            let incomingBearing = roundaboutExit == nil ? maneuverIncomingBearing : approach.bearing
             let coarseOutgoingBearing = polyline.steedPilotBearing(atDistance: maneuverGeometryDistance + 50) ?? step.polyline.steedPilotLastSegmentBearingDegrees
             let exitAngleDiagnostic = roundaboutExit == 1
                 ? roundaboutExitAngleDiagnostic(
@@ -158,6 +161,7 @@ enum NavigationRouteBuilder {
                 sourceStep: step,
                 roundaboutExit: roundaboutExit,
                 previousStepWasRoundabout: index > 0 && NavigationRouteBuilder.roundaboutExit(from: mapKitSteps[index - 1].instructions) != nil,
+                previousStepHasManeuver: index > 0 && NavigationDecisionManeuver(instruction: mapKitSteps[index - 1].instructions).isMeaningfulDirection,
                 stepStartDistance: maneuverStartDistance,
                 roundaboutTargetDistance: targetDistance,
                 incomingBearing: stepStartIncomingBearing,
@@ -247,13 +251,13 @@ enum NavigationRouteBuilder {
         // MapKit sometimes describes UK roundabouts using a direction instead
         // of an ordinal. Preserve them as roundabouts and infer the usual exit.
         if normalizedInstruction.contains("roundabout") {
-            if normalizedInstruction.contains("turn left") {
+            if normalizedInstruction.contains("turn left") || normalizedInstruction.contains("bear left") {
                 return 1
             }
             if normalizedInstruction.contains("continue") {
                 return 2
             }
-            if normalizedInstruction.contains("turn right") {
+            if normalizedInstruction.contains("turn right") || normalizedInstruction.contains("bear right") {
                 return 3
             }
         }
@@ -442,7 +446,7 @@ enum NavigationRouteBuilder {
 
         let existingInstructionOffsets = existingSteps
             .filter { $0.deviceManeuver?.isMeaningfulDirection == true }
-            .map(\.distanceFromLegStart)
+            .map(\.targetDistanceFromLegStart)
         var diagnostics: [NavigationSyntheticBendDiagnostic] = []
         var lastSyntheticOffset: CLLocationDistance = -duplicateSuppressionDistance
         var lastSyntheticManeuver: NavigationDecisionManeuver?
@@ -562,17 +566,20 @@ enum NavigationRouteBuilder {
     }
 
     private static func roundaboutTargetDistance(exit: Int?, stepStartDistance: CLLocationDistance, geometryDistance: CLLocationDistance, approachDeviationOffset: CLLocationDistance?) -> CLLocationDistance {
-        guard exit != nil,
-              let approachDeviationOffset else {
-            return stepStartDistance
+        guard exit != nil else {
+            return geometryDistance
+        }
+        guard let approachDeviationOffset else {
+            return geometryDistance
         }
 
         return max(0, min(geometryDistance, geometryDistance + approachDeviationOffset))
     }
 
-    private static func roundaboutApproachTurnStep(sourceStep: MKRoute.Step, roundaboutExit: Int?, previousStepWasRoundabout: Bool, stepStartDistance: CLLocationDistance, roundaboutTargetDistance: CLLocationDistance, incomingBearing: Int?, outgoingBearing: Int?) -> NavigationRouteStep? {
+    private static func roundaboutApproachTurnStep(sourceStep: MKRoute.Step, roundaboutExit: Int?, previousStepWasRoundabout: Bool, previousStepHasManeuver: Bool, stepStartDistance: CLLocationDistance, roundaboutTargetDistance: CLLocationDistance, incomingBearing: Int?, outgoingBearing: Int?) -> NavigationRouteStep? {
         guard roundaboutExit != nil,
               !previousStepWasRoundabout,
+              !previousStepHasManeuver,
               roundaboutTargetDistance - stepStartDistance >= 120 else {
             return nil
         }
