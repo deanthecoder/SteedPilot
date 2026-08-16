@@ -1827,6 +1827,7 @@ struct ContentView: View {
     }
 
     private func setDebugRideDistance(_ distance: CLLocationDistance) {
+        activeRideRecorder?.markAsTestRide()
         if let debugRideDistanceMeters,
            distance < debugRideDistanceMeters {
             activeManeuverProgressWindow = nil
@@ -3612,8 +3613,12 @@ struct ContentView: View {
             return nil
         }
 
-        let summary = recorder.finish()
         activeRideRecorder = nil
+        guard !recorder.isTestRide else {
+            return nil
+        }
+
+        let summary = recorder.finish()
         saveRideSummary(summary)
         presentedRideSummary = summary
 

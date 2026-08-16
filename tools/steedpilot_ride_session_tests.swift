@@ -56,7 +56,16 @@ private struct RideSessionTests {
         let decoded = try JSONDecoder().decode([RideSummary].self, from: encoded)
         try assert(decoded == [summary], "Ride summaries should round-trip through persistent storage")
 
-        print("10 ride session tests passed.")
+        let testRecorder = RideSessionRecorder(
+            name: "Simulated route",
+            plannedDistanceMeters: 5_000,
+            startedAt: now
+        )
+        try assert(!testRecorder.isTestRide, "A new recorder should represent a real ride")
+        testRecorder.markAsTestRide()
+        try assert(testRecorder.isTestRide, "Using simulated progress should permanently mark the session as a test ride")
+
+        print("12 ride session tests passed.")
     }
 
     private static func location(longitude: CLLocationDegrees, speed: CLLocationSpeed, timestamp: Date) -> CLLocation {

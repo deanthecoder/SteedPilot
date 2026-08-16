@@ -332,18 +332,21 @@ private struct NavigationTests {
             try assertTrue(!NavigationRouteMatching.shouldDeclareOffRoute(consecutiveFixes: 3, duration: 4), "A short GPS wobble must not declare off-route")
             try assertTrue(NavigationRouteMatching.shouldDeclareOffRoute(consecutiveFixes: 3, duration: 8), "Sustained bad fixes should declare off-route")
         },
-        TestCase(name: "Continue message leads into the next target instead of hiding it") {
+        TestCase(name: "Continue message preserves the next target distance") {
             let instructions = [
                 makeInstruction(index: 0, start: 3800, distance: 200, raw: "At the roundabout, take the first exit", maneuver: .roundabout)
             ]
 
             let farAway = snapshot(total: 4200, instructions: instructions, progress: 0).snapshot
             try assertEqual(farAway.maneuver, .continueAhead, "Distant instructions should show continue")
-            try assertEqual(farAway.distanceToManeuverMeters, 2191, "Continue distance should stop just before the next target countdown")
+            try assertEqual(farAway.distanceToManeuverMeters, 3800, "Continue distance should count down to the real target")
 
             let closeEnough = snapshot(total: 4200, instructions: instructions, progress: 2200).snapshot
             try assertEqual(closeEnough.maneuver, .roundabout, "Instruction should switch to the real maneuver inside the threshold")
             try assertEqual(closeEnough.distanceToManeuverMeters, 1600, "Real maneuver distance should count down from the target")
+
+            let justBeforeReveal = snapshot(total: 4200, instructions: instructions, progress: 2190).snapshot
+            try assertEqual(justBeforeReveal.distanceToManeuverMeters, 1610, "Continue distance must not count down to zero at the reveal threshold")
         },
         TestCase(name: "Progress arc starts full for a new target and counts down") {
             let first = snapshot(total: 2034, instructions: aGMotorsInstructions, progress: 0)

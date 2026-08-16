@@ -104,6 +104,7 @@ final class RideSessionRecorder {
 
     var weather: RideWeatherSnapshot?
     private(set) var hasRequestedWeather = false
+    private(set) var isTestRide = false
 
     private var lastLocation: CLLocation?
     private var distanceMeters: CLLocationDistance = 0
@@ -133,6 +134,10 @@ final class RideSessionRecorder {
 
         hasRequestedWeather = true
         return true
+    }
+
+    func markAsTestRide() {
+        isTestRide = true
     }
 
     func record(location: CLLocation) {

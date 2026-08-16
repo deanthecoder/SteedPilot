@@ -111,7 +111,7 @@ private struct RoutePlanTests {
             destination: "PE19 6TW, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.turnRight, textContains: "Right"),
+                ExpectedStage(.sharpRight, textContains: "Sharp right"),
                 ExpectedStage(.roundabout, textContains: "exit 1", angleRange: -125 ... -95),
                 ExpectedStage(.roundabout, textContains: "exit 2", angleRange: 80 ... 115),
                 ExpectedStage(.arrive, textContains: "Arrive")
@@ -123,7 +123,7 @@ private struct RoutePlanTests {
             destination: "Franks Farm, CB23 4EY, UK",
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.turnRight, textContains: "Right"),
+                ExpectedStage(.sharpRight, textContains: "Sharp right"),
                 ExpectedStage(.roundabout, textContains: "exit 3", angleRange: 80 ... 115),
                 ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.turnRight, textContains: "Right"),
@@ -141,16 +141,19 @@ private struct RoutePlanTests {
             avoidMotorways: true,
             expectedStages: [
                 ExpectedStage(.bendLeft, textContains: "Bend left"),
-                ExpectedStage(.turnLeft, textContains: "Left"),
-                ExpectedStage(.roundabout, textContains: "exit 1"),
-                ExpectedStage(.roundabout, textContains: "exit 2"),
-                ExpectedStage(.roundabout, textContains: "exit 1"),
-                ExpectedStage(.roundabout, textContains: "exit 2"),
-                ExpectedStage(.roundabout, textContains: "exit 1"),
-                ExpectedStage(.turnLeft, textContains: "Left"),
+                ExpectedStage(.sharpRight, textContains: "Sharp right"),
+                ExpectedStage(.roundabout, textContains: "exit 3"),
+                ExpectedStage(.turnRight, textContains: "Right"),
+                ExpectedStage(.turnRight, textContains: "Right"),
+                ExpectedStage(.bendLeft, textContains: "Bend left"),
+                ExpectedStage(.turnRight, textContains: "Right"),
                 ExpectedStage(.bendRight, textContains: "Bend right"),
-                ExpectedStage(.turnLeft, textContains: "Left"),
-                ExpectedStage(.roundabout, textContains: "exit 1", angleRange: -100 ... -60),
+                ExpectedStage(.bendLeft, textContains: "Bend left"),
+                ExpectedStage(.bendRight, textContains: "Bend right"),
+                ExpectedStage(.roundabout, textContains: "exit 3"),
+                ExpectedStage(.roundabout, textContains: "exit 1"),
+                ExpectedStage(.roundabout, textContains: "exit 3"),
+                ExpectedStage(.roundabout, textContains: "exit 1"),
                 ExpectedStage(.arrive, textContains: "Arrive")
             ]
         )
@@ -173,6 +176,22 @@ private struct RoutePlanTests {
         } catch {
             failures.append(String(describing: error))
             print("FAIL signed turn maneuvers: \(error)")
+        }
+
+        do {
+            try validateRoundaboutContinueInstruction()
+            print("PASS roundabout continue instruction")
+        } catch {
+            failures.append(String(describing: error))
+            print("FAIL roundabout continue instruction: \(error)")
+        }
+
+        do {
+            try validateGeometryCorrection()
+            print("PASS geometry correction")
+        } catch {
+            failures.append(String(describing: error))
+            print("FAIL geometry correction: \(error)")
         }
         print("")
 
@@ -372,7 +391,32 @@ private struct RoutePlanTests {
         try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: -35), .slightLeft, "Moderate negative angles should map to slight left")
         try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: 35), .slightRight, "Moderate positive angles should map to slight right")
         try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: 75), .turnRight, "Strong positive angles should map to right turns")
+        try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: -100), .sharpLeft, "Very strong negative angles should map to sharp left turns")
+        try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: 100), .sharpRight, "Very strong positive angles should map to sharp right turns")
         try assertEqual(NavigationRouteBuilder.signedTurnManeuver(forAngle: 12), .continueAhead, "Small angle changes should remain continue")
+    }
+
+    private static func validateRoundaboutContinueInstruction() throws {
+        let instruction = "At the roundabout, continue onto Ermine Street"
+        try assertEqual(NavigationRouteBuilder.roundaboutExit(from: instruction), 2, "A straight-ahead roundabout should infer the second exit")
+        try assertEqual(NavigationRouteBuilder.roundaboutExit(from: "At the roundabout, turn left"), 1, "A leftward UK roundabout should infer the first exit")
+        try assertEqual(NavigationRouteBuilder.roundaboutExit(from: "At the roundabout, turn right"), 3, "A rightward UK roundabout should infer the third exit")
+    }
+
+    private static func validateGeometryCorrection() throws {
+        let corrected = NavigationRouteBuilder.geometryCorrectedManeuver(
+            .turnRight,
+            incomingBearing: 282,
+            outgoingBearing: 182
+        )
+        try assertEqual(corrected, .sharpLeft, "A strong leftward route must override contradictory right-turn text")
+
+        let retained = NavigationRouteBuilder.geometryCorrectedManeuver(
+            .turnRight,
+            incomingBearing: 177,
+            outgoingBearing: 140
+        )
+        try assertEqual(retained, .turnRight, "A modest geometry disagreement should retain MapKit's maneuver")
     }
 
     private static func makeRoundaboutStep(start: CLLocationDistance, distance: CLLocationDistance, angle: Int) -> NavigationRouteStep {

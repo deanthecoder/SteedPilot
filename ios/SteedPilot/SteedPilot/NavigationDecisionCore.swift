@@ -316,9 +316,9 @@ enum NavigationDecisionEngine {
         let isEarlyArrivalInstruction = instruction?.maneuver == .arrive && !isArriving
         let continueThresholdMeters: CLLocationDistance = instruction?.maneuver.isBend == true ? 400 : 1609.344
         let shouldContinue = !isArriving && (isEarlyArrivalInstruction || remainingManeuver > continueThresholdMeters)
-        let displayedManeuverDistance = shouldContinue
-            ? (isEarlyArrivalInstruction ? remainingDistance : max(remainingManeuver - continueThresholdMeters, 1))
-            : (isArriving ? remainingDistance : remainingManeuver)
+        let displayedManeuverDistance = isArriving || isEarlyArrivalInstruction
+            ? remainingDistance
+            : remainingManeuver
         let maneuver = isArriving ? NavigationDecisionManeuver.arrive : (shouldContinue ? .continueAhead : (instruction?.maneuver ?? .continueAhead))
         let progressDistance = isArriving ? remainingDistance : (shouldContinue ? displayedManeuverDistance : remainingManeuver)
         let progressResult = maneuverProgressRemaining(

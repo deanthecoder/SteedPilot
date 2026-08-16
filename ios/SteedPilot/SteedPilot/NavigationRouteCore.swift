@@ -222,7 +222,8 @@ enum NavigationRouteBuilder {
     }
 
     static func roundaboutExit(from instruction: String) -> Int? {
-        let words = instruction.lowercased()
+        let normalizedInstruction = instruction.lowercased()
+        let words = normalizedInstruction
             .replacingOccurrences(of: ",", with: " ")
             .replacingOccurrences(of: ".", with: " ")
             .split(separator: " ")
@@ -240,6 +241,20 @@ enum NavigationRouteBuilder {
                 case "fifth", "5th": return 5
                 case "sixth", "6th": return 6
                 default: break
+            }
+        }
+
+        // MapKit sometimes describes UK roundabouts using a direction instead
+        // of an ordinal. Preserve them as roundabouts and infer the usual exit.
+        if normalizedInstruction.contains("roundabout") {
+            if normalizedInstruction.contains("turn left") {
+                return 1
+            }
+            if normalizedInstruction.contains("continue") {
+                return 2
+            }
+            if normalizedInstruction.contains("turn right") {
+                return 3
             }
         }
 
@@ -317,23 +332,51 @@ enum NavigationRouteBuilder {
     }
 
     private static func inferredManeuver(_ maneuver: NavigationDecisionManeuver, instruction: String, incomingBearing: Int?, outgoingBearing: Int?) -> NavigationDecisionManeuver {
-        guard (maneuver == .continueAhead || maneuver == .exitLeft),
-              instruction.lowercased().contains("take the exit") || instruction.lowercased().contains("take exit") else {
+        var inferred = maneuver
+        if (maneuver == .continueAhead || maneuver == .exitLeft),
+           instruction.lowercased().contains("take the exit") || instruction.lowercased().contains("take exit") {
+            guard let angle = relativeAngle(incomingBearing: incomingBearing, outgoingBearing: outgoingBearing) else {
+                return .exitLeft
+            }
+
+            if angle < -25 {
+                inferred = .exitLeft
+            } else if angle > 25 {
+                inferred = .exitRight
+            } else {
+                inferred = .continueAhead
+            }
+        }
+
+        return geometryCorrectedManeuver(
+            inferred,
+            incomingBearing: incomingBearing,
+            outgoingBearing: outgoingBearing
+        )
+    }
+
+    static func geometryCorrectedManeuver(_ maneuver: NavigationDecisionManeuver, incomingBearing: Int?, outgoingBearing: Int?) -> NavigationDecisionManeuver {
+        guard let angle = relativeAngle(incomingBearing: incomingBearing, outgoingBearing: outgoingBearing),
+              abs(angle) >= 60 else {
             return maneuver
         }
 
-        guard let angle = relativeAngle(incomingBearing: incomingBearing, outgoingBearing: outgoingBearing) else {
-            return .exitLeft
+        let sourcePointsLeft: Bool
+        switch maneuver {
+            case .bendLeft, .exitLeft, .slightLeft, .turnLeft, .sharpLeft:
+                sourcePointsLeft = true
+            case .bendRight, .exitRight, .slightRight, .turnRight, .sharpRight:
+                sourcePointsLeft = false
+            default:
+                return maneuver
         }
 
-        if angle < -25 {
-            return .exitLeft
-        }
-        if angle > 25 {
-            return .exitRight
+        let geometryPointsLeft = angle < 0
+        guard sourcePointsLeft != geometryPointsLeft else {
+            return maneuver
         }
 
-        return .continueAhead
+        return signedTurnManeuver(forAngle: angle)
     }
 
     private static func normalizedManeuver(_ maneuver: NavigationDecisionManeuver, roundaboutExit: Int?, incomingBearing: Int?, outgoingBearing: Int?) -> NavigationDecisionManeuver {
@@ -561,8 +604,7 @@ enum NavigationRouteBuilder {
     }
 
     private static func roundaboutStepsLookDuplicated(_ first: NavigationRouteStep, _ second: NavigationRouteStep) -> Bool {
-        guard first.deviceRoundaboutExit == second.deviceRoundaboutExit,
-              first.rawInstruction.localizedCaseInsensitiveCompare(second.rawInstruction) == .orderedSame else {
+        guard first.deviceRoundaboutExit == second.deviceRoundaboutExit else {
             return false
         }
 
@@ -570,7 +612,8 @@ enum NavigationRouteBuilder {
         let firstEnd = first.distanceFromLegStart + first.distance
         let secondEnd = second.distanceFromLegStart + second.distance
         let spansOverlap = first.distanceFromLegStart <= secondEnd && second.distanceFromLegStart <= firstEnd
-        return targetGap <= 120 || spansOverlap
+        let sameInstruction = first.rawInstruction.localizedCaseInsensitiveCompare(second.rawInstruction) == .orderedSame
+        return targetGap <= 5 || (sameInstruction && (targetGap <= 120 || spansOverlap))
     }
 
     private static func roundaboutDuplicateScore(_ step: NavigationRouteStep) -> Int {
@@ -596,11 +639,17 @@ enum NavigationRouteBuilder {
     }
 
     static func signedTurnManeuver(forAngle angle: Int) -> NavigationDecisionManeuver {
+        if angle <= -95 {
+            return .sharpLeft
+        }
         if angle < -60 {
             return .turnLeft
         }
         if angle < -20 {
             return .slightLeft
+        }
+        if angle >= 95 {
+            return .sharpRight
         }
         if angle > 60 {
             return .turnRight
