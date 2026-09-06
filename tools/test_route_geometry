@@ -12,9 +12,18 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+test_directory="$(mktemp -d "${TMPDIR:-/tmp}/steedpilot-route-geometry.XXXXXX")"
+trap 'rm -rf "$test_directory"' EXIT
+python3 -B - "$test_directory" <<'PY'
+import gzip
+import sys
+from pathlib import Path
+for source in Path('fixtures/route-geometry').glob('*.json.gz'):
+    (Path(sys.argv[1]) / source.stem).write_bytes(gzip.decompress(source.read_bytes()))
+PY
 swiftc -suppress-warnings -parse-as-library \
   ios/SteedPilot/SteedPilot/NavigationDecisionCore.swift \
   ios/SteedPilot/SteedPilot/NavigationRouteCore.swift \
   tools/steedpilot_route_geometry_tests.swift \
-  -o /tmp/steedpilot_route_geometry_tests
-/tmp/steedpilot_route_geometry_tests
+  -o "$test_directory/steedpilot_route_geometry_tests"
+"$test_directory/steedpilot_route_geometry_tests" "$test_directory"
