@@ -4,6 +4,15 @@
 # SteedPilot
 Motorcycle navigation companion powered by iPhone + ESP32 with a clean circular HUD-style display.
 
+## App and Device
+
+The iPhone app displays the route, while the physical SteedPilot device presents glanceable turn-by-turn directions.
+
+| iPhone app | SteedPilot device |
+| --- | --- |
+| <img src="img/steedpilot-iphone-app.png" alt="SteedPilot iPhone app showing a route on the map" width="300"> | <img src="img/steedpilot-device.jpg" alt="Physical SteedPilot device showing a left bend in 50 metres" width="360"> |
+| Route map and ride information. | Circular navigation display in its enclosure. |
+
 ## Vision
 SteedPilot is a compact motorcycle navigation companion inspired by minimalist devices such as the Beeline Moto II.
 
